@@ -7,7 +7,7 @@
  * @module dsh-workbuddy-connect/upstream
  */
 
-import { randomUUID } from 'node:crypto'
+import { randomBytes, randomUUID } from 'node:crypto'
 import { appUserAgent, resolveAppVersion, type AppVersionInfo } from './app-version.ts'
 import { chatUserAgent, fallbackChatIdentity, resolveChatIdentity, type ChatIdentity } from './client-identity.ts'
 import type { WorkBuddyCredential } from './auth.ts'
@@ -404,6 +404,43 @@ export function extractDisplayErrorMessage(body: string): string | undefined {
   return undefined
 }
 
+/**
+ * Compose the one-line reason to surface for a rejected request.
+ *
+ * WorkBuddy reports a class of different objections under a single localized
+ * sentence — `400` / `code 11128` alone covers a rejected `role`, a missing
+ * conversation id, and a harness-branded prompt, and every one of them reads
+ * 「请求被拦截，请重新发送」 to the user. The display text is therefore useless
+ * for diagnosis while the machine fields are not, so this keeps both: the
+ * sentence the user can act on, followed by the upstream's own `code` and
+ * `msg` when they add anything.
+ *
+ * Returns undefined for a body that is not a JSON envelope, so the caller can
+ * fall back to the raw excerpt.
+ */
+export function describeUpstreamRejection(body: string): string | undefined {
+  const display = extractDisplayErrorMessage(body)
+  const trimmed = body.trim()
+  if (!trimmed.startsWith('{')) return display
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(trimmed)
+  } catch {
+    return display
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return display
+  const envelope = parsed as Record<string, unknown>
+  const code = typeof envelope['code'] === 'number' ? envelope['code'] : undefined
+  const msg = typeof envelope['msg'] === 'string' ? envelope['msg'].trim() : ''
+  const machine = [
+    code === undefined ? '' : `code ${code}`,
+    msg === '' || msg === display ? '' : msg,
+  ].filter(part => part !== '').join(': ')
+  if (display === undefined) return machine === '' ? undefined : machine
+  if (machine === '') return display
+  return `${display} (${machine})`
+}
+
 /** Region for a login domain; an empty domain means CN (matching upstream tooling). */
 export function regionOf(domain: string): WorkBuddyRegion {
   const lowered = domain.trim().toLowerCase()
@@ -462,13 +499,56 @@ function conversationHeaders(): Record<string, string> {
 }
 
 /**
+ * The per-request identity headers the official client attaches to a chat.
+ *
+ * Read out of the shipped desktop client (`resources/app.asar`), where the chat
+ * path sets them alongside the `X-Conversation-*` trio: `X-Request-ID` (one
+ * fresh id per call), the `X-Private-Data` / `x-codebuddy-request` marks that
+ * declare the caller as a first-party client, and the W3C / B3 trace family
+ * (`traceparent`, `b3`, `X-B3-*`, `X-Trace-ID`) the gateway's tracing accepts.
+ *
+ * Why they are here: the CN gateway reports every channel-level objection with
+ * the same `400` / `11128` and the same 「请求被拦截，请重新发送」 display text,
+ * so a rejection cannot be attributed to one missing header from the response.
+ * The trio alone was measured sufficient on 2026-10-16 (#139); a request shape
+ * that carries everything the official client sends cannot be missing a piece
+ * of the contract the gateway is entitled to check. Synthesised locally, never
+ * echoed from a response, and fresh per request — they identify a call, not a
+ * session, so concurrent sub-agents never share one.
+ *
+ * `acp-connection-id` and `X-Agent-Intent`/`X-Agent-Purpose` are deliberately
+ * *not* impersonated: they belong to the ACP transport and to the desktop
+ * agent's routing, and inventing them would claim a channel this plugin does
+ * not speak.
+ */
+function requestIdentityHeaders(): Record<string, string> {
+  const traceId = randomBytes(16).toString('hex')
+  const spanId = randomBytes(8).toString('hex')
+  const parentSpanId = randomBytes(8).toString('hex')
+  return {
+    'X-Request-ID': randomUUID(),
+    'X-Private-Data': 'true',
+    'x-codebuddy-request': '1',
+    'traceparent': `00-${traceId}-${spanId}-01`,
+    'b3': `${traceId}-${spanId}-1-${parentSpanId}`,
+    'X-B3-TraceId': traceId,
+    'X-B3-ParentSpanId': parentSpanId,
+    'X-B3-SpanId': spanId,
+    'X-B3-Sampled': '1',
+    'X-Trace-ID': traceId,
+  }
+}
+
+/**
  * Chat request headers, including the X-No-* conventions the official CLI uses.
  *
  * `userAgent` and `clientVersion` carry the same resolved desktop identity for
  * chat and probe requests. Refresh shares `commonHeaders` but never this
  * override, so the two paths cannot drift into each other. The
  * `X-Conversation-*` trio rides along too — see {@link conversationHeaders} —
- * because the international gateway rejects a chat that omits it.
+ * because the international gateway rejects a chat that omits it, and
+ * {@link requestIdentityHeaders} carries the rest of the official client's
+ * per-request set.
  */
 function chatHeaders(credential: WorkBuddyCredential, userAgent: string, clientVersion: string): Record<string, string> {
   const headers: Record<string, string> = {
@@ -486,6 +566,7 @@ function chatHeaders(credential: WorkBuddyCredential, userAgent: string, clientV
     'X-IDE-Version': clientVersion,
     'X-Product': 'SaaS',
     ...conversationHeaders(),
+    ...requestIdentityHeaders(),
   }
   return headers
 }
@@ -1762,6 +1843,12 @@ export function modelWithCurrentPromotion(model: WorkBuddyUpstreamModel, now = D
  *    the two-word brand to its first word, clears the rejection; changing
  *    account or API key does not. See #204.
  *
+ *    Since the same 11128 is reported for a prompt that reaches the wire in a
+ *    shape #204 did not cover — multipart (`[{ type: 'text', text }]`) content,
+ *    or harness-authored `tools[].function.description` — the rewrite covers
+ *    all three carriers. The rejection text alone cannot tell them apart, so
+ *    the repair covers the class rather than the one measured spelling.
+ *
  * `stream` and `tool_choice` are deliberately still not touched here: the shim
  * forces `stream: true` before handing the body to
  * {@link WorkBuddyUpstreamClient.chatStream}, and `tool_choice` normalisation
@@ -1795,7 +1882,7 @@ export function prepareCnChatBody(source: string): string {
 const SANITIZE_BRAND_RE = /DeepSeek[ \t]+Harness/g
 
 /**
- * Shorten the harness brand to its first word in instruction messages.
+ * Shorten the harness brand to its first word in instruction text.
  *
  * The CN gateway answers 400 / 11128 for a system (or developer) message that
  * names the harness by its full two-word brand (#204). The offending paragraph
@@ -1809,29 +1896,99 @@ const SANITIZE_BRAND_RE = /DeepSeek[ \t]+Harness/g
  * still learns it is talking to a user through a GUI — only the brand spelling
  * is shortened.
  *
- * Scope matches every other body rewrite: `system` and `developer` only.
- * `user` and `tool` are the user's own data and are never touched, so a quoted
- * brand name inside a prompt stays quoted verbatim. Only string content is
- * rewritten; array (multipart) content is left alone rather than
- * reconstructed, so an unusual message shape can never be reshaped by
- * accident.
+ * Scope is "text the harness writes as instructions", never the user's own
+ * words: `system` and `developer` messages, plus the `tools` block, whose
+ * descriptions are authored by the harness and its plugins rather than by the
+ * user. `user` and `tool` messages are never touched, so a quoted brand name
+ * inside a prompt stays quoted verbatim.
+ *
+ * Three carriers, because a prompt reaches the wire in more than one shape and
+ * leaving any of them alone re-opens the same rejection:
+ *
+ * 1. string content (the common OpenAI shape);
+ * 2. multipart content — `[{ type: 'text', text }]` — which is what a message
+ *    with an attached image or document looks like. Only `text` parts are
+ *    rewritten; every other part keeps its identity and order, so a rewrite can
+ *    never reshape a message;
+ * 3. `tools[].function.description`, the largest block of harness-authored
+ *    prose in a typical request.
+ *
+ * Only the brand spelling changes, and only where {@link SANITIZE_BRAND_RE}
+ * matches — identifiers, paths and package names keep their exact form.
  */
 function sanitizeFingerprint(obj: Record<string, unknown>): void {
+  for (const message of instructionMessages(obj)) {
+    const content = message['content']
+    if (typeof content === 'string') {
+      message['content'] = shortenBrand(content)
+      continue
+    }
+    if (!Array.isArray(content)) continue
+    for (const part of content) {
+      if (typeof part !== 'object' || part === null || Array.isArray(part)) continue
+      const wrapped = part as Record<string, unknown>
+      if (wrapped['type'] !== 'text' && wrapped['type'] !== 'input_text') continue
+      const text = wrapped['text']
+      if (typeof text !== 'string') continue
+      wrapped['text'] = shortenBrand(text)
+    }
+  }
+  for (const description of toolDescriptions(obj)) {
+    description.owner['description'] = shortenBrand(description.text)
+  }
+}
+
+/** `system` / `developer` messages of a body, in wire order. */
+function instructionMessages(obj: Record<string, unknown>): Record<string, unknown>[] {
   const messages = obj['messages']
-  if (!Array.isArray(messages)) return
+  if (!Array.isArray(messages)) return []
+  const found: Record<string, unknown>[] = []
   for (const message of messages) {
     if (typeof message !== 'object' || message === null || Array.isArray(message)) continue
     const wrapped = message as Record<string, unknown>
     const role = wrapped['role']
     if (role !== 'system' && role !== 'developer') continue
-    const content = wrapped['content']
-    if (typeof content !== 'string') continue
-    if (!SANITIZE_BRAND_RE.test(content)) continue
-    // `test` on a /g regex advances lastIndex; reset before `replace` so a
-    // second message in the same body is not skipped.
-    SANITIZE_BRAND_RE.lastIndex = 0
-    wrapped['content'] = content.replace(SANITIZE_BRAND_RE, 'DeepSeek')
+    found.push(wrapped)
   }
+  return found
+}
+
+/**
+ * Tool descriptions, paired with the object that owns each string.
+ *
+ * Both the `{ type: 'function', function: { description } }` shape and the
+ * flattened `{ name, description }` shape occur in the wild; a row that is not
+ * an object is skipped rather than reconstructed.
+ */
+function toolDescriptions(obj: Record<string, unknown>): { owner: Record<string, unknown>; text: string }[] {
+  const tools = obj['tools']
+  if (!Array.isArray(tools)) return []
+  const found: { owner: Record<string, unknown>; text: string }[] = []
+  for (const tool of tools) {
+    if (typeof tool !== 'object' || tool === null || Array.isArray(tool)) continue
+    const wrapped = tool as Record<string, unknown>
+    const nested = wrapped['function']
+    const owner = typeof nested === 'object' && nested !== null && !Array.isArray(nested)
+      ? nested as Record<string, unknown>
+      : wrapped
+    const text = owner['description']
+    if (typeof text !== 'string') continue
+    found.push({ owner, text })
+  }
+  return found
+}
+
+/**
+ * Rewrite the brand in one string, returning the input object untouched when
+ * there is nothing to shorten.
+ *
+ * `test` on a /g regex advances `lastIndex`, so the probe resets it before the
+ * `replace`; without that, a second carrier in the same body is skipped.
+ */
+function shortenBrand(text: string): string {
+  if (!SANITIZE_BRAND_RE.test(text)) return text
+  SANITIZE_BRAND_RE.lastIndex = 0
+  return text.replace(SANITIZE_BRAND_RE, 'DeepSeek')
 }
 
 export function prepareInternationalChatBody(source: string): string {

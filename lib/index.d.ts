@@ -751,6 +751,12 @@ declare function modelWithCurrentPromotion(model: WorkBuddyUpstreamModel, now?: 
  *    the two-word brand to its first word, clears the rejection; changing
  *    account or API key does not. See #204.
  *
+ *    Since the same 11128 is reported for a prompt that reaches the wire in a
+ *    shape #204 did not cover — multipart (`[{ type: 'text', text }]`) content,
+ *    or harness-authored `tools[].function.description` — the rewrite covers
+ *    all three carriers. The rejection text alone cannot tell them apart, so
+ *    the repair covers the class rather than the one measured spelling.
+ *
  * `stream` and `tool_choice` are deliberately still not touched here: the shim
  * forces `stream: true` before handing the body to
  * {@link WorkBuddyUpstreamClient.chatStream}, and `tool_choice` normalisation

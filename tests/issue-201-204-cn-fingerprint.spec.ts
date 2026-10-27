@@ -13,6 +13,10 @@
  * unmodified install hit it. Measured by bisection on a live CN account:
  * dropping either clause of that paragraph, or shortening the brand to its
  * first word, clears the rejection; changing account or key does not.
+ *
+ * The carrier pins at the bottom cover the shapes a prompt actually reaches the
+ * wire in — multipart content and harness-authored tool descriptions — because
+ * one 11128 reads the same to the user whichever carrier it came from.
  */
 import { describe, expect, it } from 'vitest'
 import { prepareCnChatBody } from '../src/upstream.ts'
@@ -105,10 +109,48 @@ describe('prepareCnChatBody (#204): harness brand fingerprint', () => {
     expect(body.messages[1].content).toBe(SHORTENED)
   })
 
-  it('leaves array (multipart) content untouched', () => {
-    const content = [{ type: 'text', text: GUI_OPENER }]
-    const body = wire({ messages: [{ role: 'system', content }] })
-    expect(body.messages[0].content).toEqual(content)
+  it('rewrites multipart text parts and leaves every other part intact', () => {
+    // The carrier #204 did not cover: a message with an attachment reaches the
+    // wire as `[{ type, ... }]`, not as a string, and the brand used to survive
+    // inside it untouched.
+    const image = { type: 'image_url', image_url: { url: 'data:image/png;base64,AA' } }
+    const body = wire({
+      messages: [{
+        role: 'system',
+        content: [{ type: 'text', text: GUI_OPENER }, image, { type: 'input_text', text: GUI_OPENER }],
+      }],
+    })
+    expect(body.messages[0].content[0].text).toBe(SHORTENED)
+    expect(body.messages[0].content[1]).toEqual(image)
+    expect(body.messages[0].content[2].text).toBe(SHORTENED)
+  })
+
+  it('rewrites harness-authored tool descriptions, in both wire shapes', () => {
+    // Tool descriptions are instruction prose authored by the harness and its
+    // plugins, not user data, so they fall under the same brand rule.
+    const body = wire({
+      messages: [{ role: 'user', content: 'hi' }],
+      tools: [
+        { type: 'function', function: { name: 'read_file', description: GUI_OPENER } },
+        { name: 'web_search', description: `${GUI_OPENER} ${GUI_OPENER}` },
+      ],
+    })
+    expect(body.tools[0].function.description).toBe(SHORTENED)
+    expect(body.tools[0].function.name).toBe('read_file')
+    expect(body.tools[1].description).toBe(`${SHORTENED} ${SHORTENED}`)
+  })
+
+  it('still leaves tool output and user turns alone, tools block or not', () => {
+    const body = wire({
+      messages: [
+        { role: 'user', content: GUI_OPENER },
+        { role: 'tool', content: GUI_OPENER },
+      ],
+      tools: [{ type: 'function', function: { name: 'read_file', description: 'plain' } }],
+    })
+    expect(body.messages[0].content).toBe(GUI_OPENER)
+    expect(body.messages[1].content).toBe(GUI_OPENER)
+    expect(body.tools[0].function.description).toBe('plain')
   })
 
   it('does not alter a body without the brand', () => {

@@ -513,7 +513,9 @@ describe('error text policy against the host AUTH heuristic (PR #58)', () => {
       }),
     }))
     const body = JSON.parse(text) as { error: { message: string } }
-    expect(body.error.message).toBe('workbuddy upstream client: 内容未通过安全审核，请调整后重试。')
+    // The upstream's own code rides along: every 11140/11128 objection shares
+    // one localized sentence, so the sentence alone cannot be diagnosed.
+    expect(body.error.message).toBe('workbuddy upstream client: 内容未通过安全审核，请调整后重试。 (code 11140: request illegal)')
     expect(HOST_AUTH_HEURISTIC.test(body.error.message)).toBe(false)
   })
 
@@ -525,7 +527,7 @@ describe('error text policy against the host AUTH heuristic (PR #58)', () => {
       message: JSON.stringify({ code: 11128, msg: 'Illegal API invocation from an unapproved channel' }),
     }))
     const body = JSON.parse(text) as { error: { message: string } }
-    expect(body.error.message).toBe('workbuddy upstream client (http 400): Illegal API invocation from an unapproved channel')
+    expect(body.error.message).toBe('workbuddy upstream client (http 400): Illegal API invocation from an unapproved channel (code 11128)')
   })
 
   it('keeps the 401 note for a marked dead session', async () => {
@@ -565,7 +567,7 @@ describe('error text policy against the host AUTH heuristic (PR #58)', () => {
       message: JSON.stringify({ code: 11140, msg: 'request illegal', displayMsg: { zh: 'HTTP 403：访问受限，请稍后重试' } }),
     }))
     const body = JSON.parse(text) as { error: { message: string } }
-    expect(body.error.message).toBe('workbuddy upstream client: HTTP 403：访问受限，请稍后重试')
+    expect(body.error.message).toBe('workbuddy upstream client: HTTP 403：访问受限，请稍后重试 (code 11140: request illegal)')
     expect(HOST_AUTH_HEURISTIC.test(body.error.message)).toBe(true)
   })
 

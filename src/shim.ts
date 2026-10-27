@@ -21,7 +21,7 @@ import { Readable } from 'node:stream'
 import type { WorkBuddyCredentialStore } from './auth.ts'
 import type { WorkBuddyCatalog } from './catalog.ts'
 import { bindToUsablePort, hostIsLoopback, originIsLoopback } from './loopback.ts'
-import { extractDisplayErrorMessage, prepareChatBody, WorkBuddyUpstreamClient, type UpstreamErrorKind } from './upstream.ts'
+import { describeUpstreamRejection, prepareChatBody, WorkBuddyUpstreamClient, type UpstreamErrorKind } from './upstream.ts'
 
 /** Minimal logger surface the plugin context already provides. */
 export interface ShimLogger {
@@ -251,7 +251,10 @@ export function createWorkBuddyShim(options: WorkBuddyShimOptions): WorkBuddyShi
     const result = await client.chatStream(credential, prepared, controller.signal)
 
     if (!result.ok) {
-      const detail = extractDisplayErrorMessage(result.message) ?? result.message.slice(0, 400)
+      // Keep the upstream's own `code`/`msg` next to the localized sentence:
+      // every channel- and body-level objection shares one display string, so
+      // the sentence alone cannot be diagnosed after the fact.
+      const detail = describeUpstreamRejection(result.message) ?? result.message.slice(0, 400)
       // The host adapter classifies any error text containing a bare
       // `401`/`403` word as AUTH, which would mask business errors (safety
       // review, illegal request) behind an "invalid API key" banner. Only
