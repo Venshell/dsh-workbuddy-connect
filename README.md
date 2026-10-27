@@ -16,7 +16,7 @@
 ```text
 请帮我安装并验证 DSH（DeepSeek Harness）插件 dsh-workbuddy-connect（项目地址：https://github.com/Venshell/dsh-workbuddy-connect）：
 先阅读项目 README，确认我实际使用的界面（Web / Desktop / TUI）与 DSH 内核版本，桌面版以 App 内置核心为准，不要用独立 CLI 的版本代替；
-再按版本对应关系从 npm 正式包安装（0.2.1-rc.3→0.8.1、0.2.1-rc.2→0.7.9、0.2.1-rc.1→0.7.7、0.2.0-rc.2→0.7.6、rc.1→0.7.0、0.1.5–0.1.7→0.6.5），优先走本机受支持的非插件市场渠道；部分 Desktop 发行版（尤其官方 Electron 版）的 profile 由 App 管理，各发行版规则未必相同，先确认我所用的发行版，再探查其合规的安装方式，但不得绕过其校验；
+再按版本对应关系从 npm 正式包安装（0.2.1-rc.3→0.8.2、0.2.1-rc.2→0.7.9、0.2.1-rc.1→0.7.7、0.2.0-rc.2→0.7.6、rc.1→0.7.0、0.1.5–0.1.7→0.6.5），优先走本机受支持的非插件市场渠道；部分 Desktop 发行版（尤其官方 Electron 版）的 profile 由 App 管理，各发行版规则未必相同，先确认我所用的发行版，再探查其合规的安装方式，但不得绕过其校验；
 任何本地文件或配置改动，先征得我同意并做好备份；
 装完后验证模型选择器里出现 WorkBuddy 分组，并陪我完成一次简短对话；
 若 Desktop 安装仍因 generation 校验失败（如 @types/retry 误报），请如实报告、参照上游 dataelement/dsh-desktop#688，并建议我改用独立的 Web / TUI，不要修改依赖包或绕过校验。
@@ -26,7 +26,7 @@
 
 | DSH 内核 | 推荐插件版 |
 |---|---|
-| 0.2.1-rc.3 | 0.8.1（npm latest） |
+| 0.2.1-rc.3 | 0.8.2（npm latest） |
 | 0.2.1-rc.2 | 0.7.9 |
 | 0.2.1-rc.1 | 0.7.7 |
 | 0.2.0-rc.2 | 0.7.6 |
@@ -37,8 +37,8 @@
 <summary>手动安装（命令行，仅 Web / TUI）</summary>
 
 ```sh
-# Web（按实际内核固定版本，示例为 0.2.1-rc.3 → 0.8.1；也可用 github:Venshell/dsh-workbuddy-connect 从源码安装）
-dsh plugin --profile web add @venshell/dsh-workbuddy-connect@0.8.1
+# Web（按实际内核固定版本，示例为 0.2.1-rc.3 → 0.8.2；也可用 github:Venshell/dsh-workbuddy-connect 从源码安装）
+dsh plugin --profile web add @venshell/dsh-workbuddy-connect@0.8.2
 dsh web
 
 # TUI（示例为 0.1.x 内核；该 profile 需用 pnpm 11 安装，如 npx pnpm@11）
@@ -187,7 +187,7 @@ incompatible with dsh 0.2.1-rc.4: requirements {"@deepseek-ai/dsh-llm":"0.2.1-rc
 
 历次更新（完整记录见 [releases](https://github.com/Venshell/dsh-workbuddy-connect/releases)）：
 
-- **未发布**：新增 `engines.dsh`（`>=0.2.1-rc.3 <0.3.0-0`），让安装校验改由区间决定，内核在同一 `0.2.x` 线内升级时不再需要重发插件；六项 DSH 服务 peer 保持精确钉住 `0.2.1-rc.3`，作为构建与测试基准。`tests/version.spec.ts` 新增四组断言，并用真实 `evaluatePluginCompatibility` 覆盖 `rc.2` / `rc.3` / `rc.4` / `0.2.1` / `0.2.9` / `0.3.0-rc.1` / `0.3.0` 七个版本的准入结果。国内版补齐官方客户端在 chat 上携带的每请求标识与追踪头（`X-Request-ID`、`X-Private-Data`、`x-codebuddy-request`、`traceparent` / `b3` / `X-B3-*` / `X-Trace-ID`，读自官方 `resources/app.asar`）——网关对整类「渠道不合规」只回同一个 `11128` 与同一句「请求被拦截，请重新发送」，补齐后才不会缺官方契约里的任一项；ACP 专属的 `acp-connection-id` 与 `X-Agent-Intent` / `X-Agent-Purpose` 不伪造。品牌指纹清洗从「字符串 content」扩到 multipart `text` 分片与 `tools[].description`（工具描述由插件与内核撰写，不属用户数据；`user` / `tool` 消息仍逐字保留）。错误文案改为「本地化句子 + 上游 `code` / `msg`」，因为同一句话覆盖 `role` 被拒、会话 id 缺失、品牌指纹、渠道不合规等多种成因，只留句子无法事后定位。国内版 chat 请求此前会被网关回 `11128`「请求被拦截，请重新发送」或 `11101`，现已修复：`chatStream` 自行保证 `stream: true`（两个端点一致，已带该标志的 body 逐字节不变），`system` / `developer` 正文改由最小改写处理，`user` / `tool` 消息与包名、路径一并逐字保留。另新增可选的 `DSH_WORKBUDDY_WIRE_DUMP=<文件>` 开关（默认关闭，只在失败时落盘实际发出的 body，不含请求头）与 `scripts/cn-refusal-probe.mjs`，供同类问题在同一账号上复现。
+- **0.8.2**：新增 `engines.dsh`（`>=0.2.1-rc.3 <0.3.0-0`），让安装校验改由区间决定，内核在同一 `0.2.x` 线内升级时不再需要重发插件；六项 DSH 服务 peer 保持精确钉住 `0.2.1-rc.3`，作为构建与测试基准。`tests/version.spec.ts` 新增四组断言，并用真实 `evaluatePluginCompatibility` 覆盖 `rc.2` / `rc.3` / `rc.4` / `0.2.1` / `0.2.9` / `0.3.0-rc.1` / `0.3.0` 七个版本的准入结果。国内版补齐官方客户端在 chat 上携带的每请求标识与追踪头（`X-Request-ID`、`X-Private-Data`、`x-codebuddy-request`、`traceparent` / `b3` / `X-B3-*` / `X-Trace-ID`，读自官方 `resources/app.asar`）——网关对整类「渠道不合规」只回同一个 `11128` 与同一句「请求被拦截，请重新发送」，补齐后才不会缺官方契约里的任一项；ACP 专属的 `acp-connection-id` 与 `X-Agent-Intent` / `X-Agent-Purpose` 不伪造。品牌指纹清洗从「字符串 content」扩到 multipart `text` 分片与 `tools[].description`（工具描述由插件与内核撰写，不属用户数据；`user` / `tool` 消息仍逐字保留）。错误文案改为「本地化句子 + 上游 `code` / `msg`」，因为同一句话覆盖 `role` 被拒、会话 id 缺失、品牌指纹、渠道不合规等多种成因，只留句子无法事后定位。国内版 chat 请求此前会被网关回 `11128`「请求被拦截，请重新发送」或 `11101`，现已修复：`chatStream` 自行保证 `stream: true`（两个端点一致，已带该标志的 body 逐字节不变），`system` / `developer` 正文改由最小改写处理，`user` / `tool` 消息与包名、路径一并逐字保留。另新增可选的 `DSH_WORKBUDDY_WIRE_DUMP=<文件>` 开关（默认关闭，只在失败时落盘实际发出的 body，不含请求头）与 `scripts/cn-refusal-probe.mjs`，供同类问题在同一账号上复现。
 - **0.8.1**：适配 DSH 0.2.1-rc.3 内核：七项 DSH 服务 peer 与开发依赖收窄到 0.2.1-rc.3，随包的官方原子写入工具同步升级；typecheck 与全量测试通过，未发现 rc.2→rc.3 的 API 变化。
 - **0.8.0**：修复国内版三处导致「请求被拦截」或模型消失的问题。① `prepareCnChatBody` 补齐 `developer` → `system` 改写（#201）：国内端点对 `role: "developer"` 返回 400 / `11128`，而原来的实现依赖 shim 先规范化，任何绕过 shim 的调用都会泄漏；该改写是幂等的，对已规范化的 body 为 no-op。② 新增品牌指纹清洗（#204）：system / developer 消息中出现完整品牌词同样触发 `11128`，现仅把品牌缩短，句子其余内容逐字保留；只匹配空格与制表符，`deepseek-harness` 这类路径与包名不受影响，user / tool 内容永不改写。③ 国内模型目录改为双源并集：console 文档 `/v2/enterprises/personal/models`（桌面 App 选择器同源，仍带 `cli` agent）与 `/v3/config`。两源互不为超集，取并集可避免任一侧变动导致模型整批消失；单侧失败自动降级到另一侧。此前 `/v3/config` 对 App 形态 UA 不再返回 `cli` agent，选择器因此丢失 20 个 id 中的 15 个，而这些模型在 chat 端点其实仍照常可用。
 - **0.7.9**：恢复 DSH 0.2.1-rc.2 上国际版最大上下文窗口开关，修复延迟初始化及设置持久化（PR [#172](https://github.com/corrinehu/dsh-workbuddy-connect/pull/172)，by @1Dreamer666）；避免本地服务绑定到 fetch 禁用端口导致国际版 502（PR [#164](https://github.com/corrinehu/dsh-workbuddy-connect/pull/164)，by @Xiong-Ziyi）；同名积分包合并展示，减少重复条目。
@@ -202,9 +202,9 @@ incompatible with dsh 0.2.1-rc.4: requirements {"@deepseek-ai/dsh-llm":"0.2.1-rc
 - **0.7.0**：适配 DSH 0.2.0 的设置服务改造，不再支持 0.1.x。
 - **0.6.5**：0.1.x 线最终版本。
 
-固定版本安装示例：`dsh plugin --profile web add @venshell/dsh-workbuddy-connect@0.8.1`（0.7.9 及更早用旧包名 `dsh-workbuddy-connect`）。
+固定版本安装示例：`dsh plugin --profile web add @venshell/dsh-workbuddy-connect@0.8.2`（0.7.9 及更早用旧包名 `dsh-workbuddy-connect`）。
 
-**pi-ai 版本按内核线区分，不能混**：0.2.1-rc.1 / rc.2 / rc.3 内核线（分别对应插件 0.7.7 / 0.7.8–0.7.9 / 0.8.1）已升级到 `@earendil-works/pi-ai` 1.3.0（由插件自带），profile 级历史遗留的 `overrides: {'@earendil-works/pi-ai': '0.87.1'}` **必须移除**，否则插件会因加载到旧一代 pi-ai 而启动失败；0.2.0-rc.2 内核线（插件 0.7.6）仍要求 `^0.87.1`，在这条线上**不要**把 profile 级的 pi-ai 升到 1.x，第三方插件管理器的「可更新」提示不校验 peer 约束、不能照做（[#86](https://github.com/corrinehu/dsh-workbuddy-connect/issues/86)）。
+**pi-ai 版本按内核线区分，不能混**：0.2.1-rc.1 / rc.2 / rc.3 内核线（分别对应插件 0.7.7 / 0.7.8–0.7.9 / 0.8.1 及以后）已升级到 `@earendil-works/pi-ai` 1.3.0（由插件自带），profile 级历史遗留的 `overrides: {'@earendil-works/pi-ai': '0.87.1'}` **必须移除**，否则插件会因加载到旧一代 pi-ai 而启动失败；0.2.0-rc.2 内核线（插件 0.7.6）仍要求 `^0.87.1`，在这条线上**不要**把 profile 级的 pi-ai 升到 1.x，第三方插件管理器的「可更新」提示不校验 peer 约束、不能照做（[#86](https://github.com/corrinehu/dsh-workbuddy-connect/issues/86)）。
 
 ## 免责声明
 
