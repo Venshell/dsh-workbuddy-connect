@@ -192,6 +192,43 @@ function describeOutcome(outcome) {
 const KEEP_KEYS = new Set(['model', 'messages', 'stream'])
 
 /**
+ * Halve a list of text units until one of them refuses on its own.
+ *
+ * Used on the system message once {@link bisectBody} has established that it is
+ * the carrier: a shipped system prompt is tens of kilobytes of prose, and the
+ * whole point of #204 was that only *some* of that prose is objectionable. Two
+ * requests per level is the price of never assuming which half matters.
+ *
+ * Returns `undefined` when no single unit is responsible — both halves accepted
+ * means the trigger needs text from more than one of them, or needs the size of
+ * the whole, and reporting either as "the paragraph" would be a fabrication.
+ */
+async function narrowUnits(probe, units, label) {
+  let current = units
+  while (current.length > 1) {
+    const middle = Math.ceil(current.length / 2)
+    const left = current.slice(0, middle)
+    const right = current.slice(middle)
+    const leftOutcome = await probe(left)
+    const rightOutcome = await probe(right)
+    const leftBad = !leftOutcome.ok
+    const rightBad = !rightOutcome.ok
+    console.log(`    ${label} ${String(current.length).padStart(3)}: left ${String(left.length).padStart(3)} ${leftBad ? 'refused' : 'accepted'}, right ${String(right.length).padStart(3)} ${rightBad ? 'refused' : 'accepted'}`)
+    if (leftBad && rightBad) {
+      console.log('    (both halves refuse on their own; following the first)')
+      current = left
+    } else if (leftBad) {
+      current = left
+    } else if (rightBad) {
+      current = right
+    } else {
+      return undefined
+    }
+  }
+  return { index: units.indexOf(current[0]), text: current[0] }
+}
+
+/**
  * Attribute a captured body by subtraction.
  *
  * A `11128` says a rule fired, never which one, and the shapes that clear it
@@ -205,9 +242,16 @@ const KEEP_KEYS = new Set(['model', 'messages', 'stream'])
  * and the tool block), the latter narrowed by halves so a large tool set costs
  * a handful of requests rather than one per tool.
  *
+ * When the last turn alone is accepted but "system + last turn" is refused, the
+ * run has isolated the system message, and the search continues inside its
+ * prose ({@link narrowUnits}) — that is where the first live run landed: 52
+ * tools, the whole history and every request field were innocent, and only the
+ * system text carried the refusal.
+ *
  * Every step is a real request against the account, and each accepted one
  * streams a short reply, so the total is bounded by the number of top-level
- * fields plus the log2 of the tool count.
+ * fields plus the log2 of the tool count, plus two per level of the system
+ * prose.
  */
 async function bisectBody(client, credential, original) {
   const send = async body => runCase(client, credential, { body })
@@ -231,17 +275,39 @@ async function bisectBody(client, credential, original) {
   }
 
   const messages = Array.isArray(original.messages) ? original.messages : []
-  if (messages.length > 1) {
-    const lastUser = [...messages].reverse().find(message => message?.role === 'user')
-    if (lastUser !== undefined) {
-      const outcome = await send({ ...original, messages: [lastUser] })
-      if (outcome.ok) attributed = true
-      console.log(`    keep only the last turn      ${describeOutcome(outcome)}${outcome.ok ? '   <== the history' : ''}`)
-      const firstSystem = messages.find(message => message?.role === 'system')
-      if (firstSystem !== undefined && messages.length > 2) {
-        const withSystem = await send({ ...original, messages: [firstSystem, lastUser] })
-        if (withSystem.ok) attributed = true
-        console.log(`    system + last turn           ${describeOutcome(withSystem)}${withSystem.ok ? '   <== the middle of the history' : ''}`)
+  const systemMessage = messages.find(message => message?.role === 'system')
+  const lastUser = [...messages].reverse().find(message => message?.role === 'user')
+  if (messages.length > 1 && lastUser !== undefined) {
+    const only = await send({ ...original, messages: [lastUser] })
+    if (only.ok) attributed = true
+    console.log(`    keep only the last turn      ${describeOutcome(only)}${only.ok ? '   <== the history' : ''}`)
+    if (systemMessage !== undefined && messages.length > 2) {
+      const withSystem = await send({ ...original, messages: [systemMessage, lastUser] })
+      if (withSystem.ok) attributed = true
+      console.log(`    system + last turn           ${describeOutcome(withSystem)}${withSystem.ok ? '   <== the middle of the history' : ''}`)
+    }
+    if (only.ok && systemMessage !== undefined && typeof systemMessage.content === 'string') {
+      const prose = systemMessage.content
+      const paragraphs = prose.split(/\n{2,}/).map(part => part.trim()).filter(part => part !== '')
+      console.log(`    the system message is the carrier: ${paragraphs.length} paragraph(s), ${prose.length} chars`)
+      const asSystem = async texts => send({ ...original, messages: [{ ...systemMessage, content: texts.join('\n\n') }, lastUser] })
+      let culprit = await narrowUnits(asSystem, paragraphs, 'paragraphs')
+      // A hit is often a whole section; go one level deeper before calling it.
+      if (culprit !== undefined && culprit.text.length > 800) {
+        const lines = culprit.text.split('\n').map(line => line.trim()).filter(line => line !== '')
+        if (lines.length > 1) {
+          console.log(`    narrowing paragraph #${culprit.index} by line (${lines.length})`)
+          const asLines = async texts => send({ ...original, messages: [{ ...systemMessage, content: texts.join('\n') }, lastUser] })
+          const inner = await narrowUnits(asLines, lines, 'lines')
+          if (inner !== undefined) culprit = { index: culprit.index, text: inner.text }
+        }
+      }
+      if (culprit === undefined) {
+        console.log('    => no single passage reproduces it: the text needs to be present together, or the size of the prompt is the trigger')
+      } else {
+        attributed = true
+        console.log(`    => paragraph #${culprit.index} of ${paragraphs.length} is the cause:`)
+        console.log(`       ${JSON.stringify(culprit.text.slice(0, 400))}${culprit.text.length > 400 ? '…' : ''}`)
       }
     }
   }
@@ -346,3 +412,4 @@ console.log('- `official` fails too => no prompt content passes; the refusal is 
 console.log('- a bare `11101` "Non-stream chat request" => something stripped `stream: true` off the body; `chatStream` sets it, so this means the flag never reached the wire.')
 console.log('- every case passes on a body captured from a refused chat => the refusal depends on something outside the body (headers on that particular request, or the account state at that moment).')
 console.log('- `--bisect` marks with `<==` the single removal that turns the refusal into a 200.')
+console.log('- in `--bisect`, "the system message is the carrier" means the request, the tools and the history are all fine and one passage of the system prompt is the trigger; the paragraph it prints is the smallest one that still refuses on its own.')
