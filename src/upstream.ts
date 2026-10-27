@@ -958,7 +958,12 @@ export class WorkBuddyUpstreamClient {
       identity = fallbackChatIdentity(region)
       userAgent = chatUserAgent(identity, region)
     }
-    const sent = region === 'global' ? prepareInternationalChatBody(bodyJson) : prepareCnChatBody(bodyJson)
+    // Content rewrites first, then the endpoint's own preconditions: the
+    // streaming flag is required by both gateways and is not part of the
+    // message, so it is applied last and only when absent (see
+    // {@link ensureStreamingRequest}).
+    const prepared = region === 'global' ? prepareInternationalChatBody(bodyJson) : prepareCnChatBody(bodyJson)
+    const sent = ensureStreamingRequest(prepared)
     let response: Response
     try {
       response = await fetch(`${chatBase(credential)}/v2/chat/completions`, {
@@ -1879,14 +1884,56 @@ export function modelWithCurrentPromotion(model: WorkBuddyUpstreamModel, now = D
  *    all three carriers. The rejection text alone cannot tell them apart, so
  *    the repair covers the class rather than the one measured spelling.
  *
- * `stream` and `tool_choice` are deliberately still not touched here: the shim
- * forces `stream: true` before handing the body to
- * {@link WorkBuddyUpstreamClient.chatStream}, and `tool_choice` normalisation
- * belongs in that same single place.
+ * `stream` and `tool_choice` are deliberately still not touched here: the flag
+ * is enforced one level down, in {@link ensureStreamingRequest}, so that every
+ * caller of {@link WorkBuddyUpstreamClient.chatStream} gets it and not only the
+ * ones that arrive through the shim; `tool_choice` normalisation lives there
+ * too.
  *
  * A body that is not a JSON object is returned unchanged, so this is safe to
  * run over an already-prepared-or-not body.
  */
+/**
+ * Guarantee `stream: true` on a chat body.
+ *
+ * The CN gateway decides this *before* it looks at the messages: a body without
+ * `stream: true` draws `400` / `code 11101` — "Non-stream chat request is
+ * currently not supported" — with the localized sentence 「请求内容不合法，请重试」.
+ * Measured on a live CN account against five bodies that differ only in prompt
+ * content: all five were refused at that gate, so the answer says nothing about
+ * the content it never read.
+ *
+ * {@link WorkBuddyUpstreamClient.chatStream} returns the raw SSE response, so a
+ * non-streaming body was never a supported shape here; the flag was simply left
+ * to the caller, and `createWorkBuddyShim` happens to set it. Every other
+ * caller — the refusal probe included — sent a body the endpoint refuses on
+ * sight, which is the kind of footgun that hides behind a per-caller
+ * convention.
+ *
+ * Enforced at the client boundary rather than inside a `prepare*ChatBody`
+ * function: those are documented as content rewrites and are also used to
+ * compare bodies, while this is a property of the endpoint and belongs to
+ * whoever knows which endpoint it is talking to.
+ *
+ * Idempotent, and byte-identical when `stream` is already true, so a body that
+ * was valid is never perturbed. `stream_options` is left alone: the shim sets
+ * it, and inventing it for callers that did not ask would add a field the
+ * gateway has no reason to expect.
+ */
+function ensureStreamingRequest(source: string): string {
+  let body: unknown
+  try {
+    body = JSON.parse(source)
+  } catch {
+    // Not JSON: the endpoint will reject it on its own terms.
+    return source
+  }
+  if (!isObject(body)) return source
+  if (body['stream'] === true) return source
+  body['stream'] = true
+  return JSON.stringify(body)
+}
+
 export function prepareCnChatBody(source: string): string {
   let body: unknown
   try {

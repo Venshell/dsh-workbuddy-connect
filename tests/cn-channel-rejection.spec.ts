@@ -218,3 +218,46 @@ describe('the wire dump stays off unless asked for', () => {
     }
   })
 })
+
+/**
+ * `11101` — the endpoint's streaming precondition.
+ *
+ * Measured on a live CN account: five bodies that differ only in prompt content
+ * all came back `400` / `11101` "Non-stream chat request is currently not
+ * supported", i.e. refused before the messages were read. `chatStream` only
+ * ever returns SSE, so the flag belongs to the client boundary rather than to
+ * each caller's discipline.
+ */
+describe('chat always asks for a streaming answer', () => {
+  const PLAIN = { model: 'm', messages: [{ role: 'user', content: 'hi' }] }
+
+  it('adds stream: true on CN and on the global gateway alike', async () => {
+    for (const credential of [CN, { ...CN, domain: 'www.workbuddy.ai' }]) {
+      const wire = captureFetch('{}')
+      await client().chatStream(credential, JSON.stringify(PLAIN))
+      const sent = JSON.parse(String(wire.last()[1].body)) as { stream?: unknown }
+      expect(sent.stream).toBe(true)
+    }
+  })
+
+  it('leaves an already-streaming body byte-identical', async () => {
+    const source = JSON.stringify({ ...PLAIN, stream: true })
+    const wire = captureFetch('{}')
+    await client().chatStream(CN, source)
+    // Byte-identical, so a valid request can never be perturbed by this step.
+    expect(wire.last()[1].body).toBe(source)
+  })
+
+  it('does not invent stream_options for a caller that did not set them', async () => {
+    const wire = captureFetch('{}')
+    await client().chatStream(CN, JSON.stringify(PLAIN))
+    const sent = JSON.parse(String(wire.last()[1].body)) as Record<string, unknown>
+    expect(sent['stream_options']).toBeUndefined()
+  })
+
+  it('passes a body that is not a JSON object through untouched', async () => {
+    const wire = captureFetch('{}')
+    await client().chatStream(CN, 'not json at all')
+    expect(wire.last()[1].body).toBe('not json at all')
+  })
+})

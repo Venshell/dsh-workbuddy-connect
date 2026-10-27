@@ -65,7 +65,10 @@ describe('chatStream identity', () => {
     expect(headers['X-Product']).toBe('SaaS')
     expect(headers['Authorization']).toBe('Bearer at')
     expect(headers['X-Refresh-Token']).toBeUndefined()
-    expect(init.body).toBe(JSON.stringify({ model: 'm', messages: [{ role: 'user', content: 'hi' }] }))
+    // The body is the caller's, unchanged — plus the endpoint's streaming
+    // precondition, which `chatStream` now guarantees (see
+    // `tests/cn-channel-rejection.spec.ts`).
+    expect(init.body).toBe(JSON.stringify({ model: 'm', messages: [{ role: 'user', content: 'hi' }], stream: true }))
   })
 
   it('names the international product in the UA and still prepends the first system message', async () => {

@@ -730,56 +730,6 @@ interface WorkBuddyPromotion {
  * as-is, so the common case allocates nothing.
  */
 declare function modelWithCurrentPromotion(model: WorkBuddyUpstreamModel, now?: number): WorkBuddyUpstreamModel;
-/**
- * Apply the international endpoint's extra chat requirement: the first message
- * must be a system prompt.
- *
- * The international gateway rejects a body whose first message is not `system`
- * with HTTP 400 code 11128 ("first message is not system prompt"). Note that
- * the *same* code means something else on the CN endpoint — there it reports a
- * rejected `developer` role — so the two are never branched on by code alone.
- *
- * The added prompt is deliberately empty of user content and prepended, never
- * merged: existing messages keep their order and wording. A body that is not a
- * JSON object is returned unchanged, exactly as {@link prepareChatBody} does,
- * so this is safe to run over an already-prepared-or-not body.
- */
-/**
- * Prepare a body for the **CN** endpoint.
- *
- * Two rewrites, both measured as one-to-one with the CN gateway's rejections:
- *
- * 1. {@link normalizeDeveloperRole}. Until #201 the CN wire was the caller's
- *    body verbatim apart from {@link dropUnsupportedEffort}, on the assumption
- *    that `createWorkBuddyShim`'s `prepareChatBody` call had already normalised
- *    the body. That held only for requests entering through the shim; any
- *    other caller of `chatStream` left `role: "developer"` on the wire and drew
- *    400 / 11128 while international kept working, because
- *    {@link prepareInternationalChatBody} does route through
- *    {@link prepareChatBody}. The rewrite is idempotent, so re-running it over
- *    an already-normalised body changes nothing.
- * 2. {@link sanitizeFingerprint}. The harness system prompt ships a brand
- *    paragraph (the "You are interacting with the user through the … GUI"
- *    runtime-context opener), and the CN gateway rejects it with the *same*
- *    400 / 11128, on `system` and `developer` alike. Measured by bisection on a
- *    live CN account: deleting either clause of that paragraph, or shortening
- *    the two-word brand to its first word, clears the rejection; changing
- *    account or API key does not. See #204.
- *
- *    Since the same 11128 is reported for a prompt that reaches the wire in a
- *    shape #204 did not cover — multipart (`[{ type: 'text', text }]`) content,
- *    or harness-authored `tools[].function.description` — the rewrite covers
- *    all three carriers. The rejection text alone cannot tell them apart, so
- *    the repair covers the class rather than the one measured spelling.
- *
- * `stream` and `tool_choice` are deliberately still not touched here: the shim
- * forces `stream: true` before handing the body to
- * {@link WorkBuddyUpstreamClient.chatStream}, and `tool_choice` normalisation
- * belongs in that same single place.
- *
- * A body that is not a JSON object is returned unchanged, so this is safe to
- * run over an already-prepared-or-not body.
- */
 declare function prepareCnChatBody(source: string): string;
 declare function prepareInternationalChatBody(source: string): string;
 //#endregion
