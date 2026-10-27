@@ -192,6 +192,38 @@ function describeOutcome(outcome) {
 const KEEP_KEYS = new Set(['model', 'messages', 'stream'])
 
 /**
+ * Candidate neutralisations of the passage that refuses on its own.
+ *
+ * Finding the paragraph is not the same as finding the rule: the first live run
+ * landed on a paragraph about `@`-prefixed paths, which contains an `@`, a
+ * `@"…"` sample, quotes and an ellipsis — four candidates and no way to tell
+ * them apart from the text alone. Each variant below changes exactly one of
+ * those, so whichever one clears the refusal names the rule, and the fix can be
+ * the narrowest rewrite that preserves the instructions' meaning.
+ *
+ * `as written` is the control: it must still refuse, or the run has drifted.
+ */
+function passageVariants(text) {
+  const variants = [
+    { name: 'as written', text },
+    { name: 'without @', text: text.replace(/@/g, '') },
+    { name: 'full-width ＠', text: text.replace(/@/g, '＠') },
+    { name: 'without @"…" sample', text: text.replace(/@\s*"[^"]*"[^.!?]*[.!?]?/g, '') },
+    { name: 'without quotes', text: text.replace(/["'“”‘’]/g, '') },
+    { name: 'first sentence only', text: (text.match(/^[^.!?]*[.!?]/) ?? [text])[0] },
+  ]
+  // Two variants can collapse onto the same string (a paragraph with no `@`
+  // would make the first three identical); testing a duplicate costs a request
+  // and reports the same answer twice.
+  const seen = new Set()
+  return variants.filter(variant => {
+    if (seen.has(variant.text)) return false
+    seen.add(variant.text)
+    return true
+  })
+}
+
+/**
  * Halve a list of text units until one of them refuses on its own.
  *
  * Used on the system message once {@link bisectBody} has established that it is
@@ -308,6 +340,20 @@ async function bisectBody(client, credential, original) {
         attributed = true
         console.log(`    => paragraph #${culprit.index} of ${paragraphs.length} is the cause:`)
         console.log(`       ${JSON.stringify(culprit.text.slice(0, 400))}${culprit.text.length > 400 ? '…' : ''}`)
+        // The paragraph names a *place*, not a rule. Change one thing about it
+        // at a time: whichever variant clears the refusal is the rule, and that
+        // decides how narrow the fix can be.
+        const asPassage = async text => send({ ...original, messages: [{ ...systemMessage, content: text }, lastUser] })
+        let cleared = false
+        for (const variant of passageVariants(culprit.text)) {
+          const outcome = await asPassage(variant.text)
+          if (outcome.ok && variant.name !== 'as written') cleared = true
+          console.log(`    variant ${variant.name.padEnd(22)} ${describeOutcome(outcome)}${outcome.ok ? '   <== clears it' : ''}`)
+        }
+        if (!cleared) {
+          console.log('    => no single character-level change clears it; the exact passage, in full, is:')
+          console.log(`       ${JSON.stringify(culprit.text)}`)
+        }
       }
     }
   }
