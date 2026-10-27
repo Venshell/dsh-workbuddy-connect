@@ -7,7 +7,9 @@
  * @module dsh-workbuddy-connect/upstream
  */
 
-import { appendFileSync } from 'node:fs'
+import { appendFileSync, mkdirSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { appUserAgent, resolveAppVersion, type AppVersionInfo } from './app-version.ts'
 import { chatUserAgent, fallbackChatIdentity, resolveChatIdentity, type ChatIdentity } from './client-identity.ts'
@@ -775,15 +777,42 @@ function envelopeError(status: number, envelope: Envelope): Error {
  * Headers are never written, so the bearer token cannot leak into the file. A
  * write failure is swallowed — diagnostics must not turn one failed request
  * into two.
+ *
+ * Two usability traps are closed here, both measured by getting them wrong on
+ * the first live run. `=1` / `=true` selects a file in the OS temp directory,
+ * because the obvious `C:\tmp\wire.jsonl` does not exist on Windows and an
+ * `appendFileSync` into a missing directory fails silently — the operator sets
+ * the switch, reproduces the refusal, and finds no file with no explanation.
+ * The parent directory is created for the same reason. And the resolution is
+ * exported through {@link resolveWireDumpPath}, so a reader of the file can be
+ * told where to look instead of guessing.
  */
 function dumpRejectedWire(record: { status: number; body: string; response: string }): void {
-  const target = process.env['DSH_WORKBUDDY_WIRE_DUMP']?.trim() ?? ''
-  if (target === '') return
+  const target = resolveWireDumpPath()
+  if (target === undefined) return
   try {
+    mkdirSync(dirname(target), { recursive: true })
     appendFileSync(target, `${JSON.stringify({ at: new Date().toISOString(), ...record })}\n`, 'utf8')
   } catch {
     // Best-effort by design.
   }
+}
+
+/** File the switch selects when it is set to `1` / `true` rather than a path. */
+const WIRE_DUMP_DEFAULT_NAME = 'dsh-workbuddy-wire.jsonl'
+
+/**
+ * Resolve `DSH_WORKBUDDY_WIRE_DUMP` to a file path, or `undefined` when off.
+ *
+ * Exported so the replay side (`scripts/cn-refusal-probe.mjs`) can name the
+ * same path the writer uses; a diagnostic that has to be located by hand is one
+ * more step between a refusal and its cause.
+ */
+export function resolveWireDumpPath(): string | undefined {
+  const raw = process.env['DSH_WORKBUDDY_WIRE_DUMP']?.trim() ?? ''
+  if (raw === '') return undefined
+  if (raw === '1' || raw.toLowerCase() === 'true') return join(tmpdir(), WIRE_DUMP_DEFAULT_NAME)
+  return raw
 }
 
 /** Provenance of one successful catalog fetch, surfaced by the status card. */

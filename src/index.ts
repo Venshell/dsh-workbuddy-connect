@@ -123,6 +123,7 @@ export {
   normalizeCredits,
   parseModelCatalog,
   prepareChatBody,
+  resolveWireDumpPath,
   prepareCnChatBody,
   prepareInternationalChatBody,
   regionOf,

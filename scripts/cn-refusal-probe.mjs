@@ -33,13 +33,19 @@
  * Usage, from the package root:
  *
  *   node scripts/cn-refusal-probe.mjs
- *   node scripts/cn-refusal-probe.mjs --body wire.jsonl
+ *   node scripts/cn-refusal-probe.mjs --body wire.jsonl --bisect
+ *   node scripts/cn-refusal-probe.mjs --body --bisect
  *   node scripts/cn-refusal-probe.mjs --templates "D:/wbai/WorkBuddyAI/resources/app.asar.unpacked/resources/templates"
+ *
+ * `DSH_WORKBUDDY_WIRE_DUMP=1` dumps to `<os temp>/dsh-workbuddy-wire.jsonl`, so
+ * a bare `--body` resolves that path itself. The switch has to sit in the app's
+ * own environment, which means relaunching the app with it set — asking the
+ * operator to retype the path afterwards is one more place to get it wrong.
  */
 
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { WorkBuddyCredentialStore, WorkBuddyUpstreamClient, describeUpstreamRejection, prepareCnChatBody } from '../lib/index.js'
+import { WorkBuddyCredentialStore, WorkBuddyUpstreamClient, describeUpstreamRejection, prepareCnChatBody, resolveWireDumpPath } from '../lib/index.js'
 
 const DEFAULT_TEMPLATES = 'D:/wbai/WorkBuddyAI/resources/app.asar.unpacked/resources/templates'
 
@@ -120,6 +126,14 @@ function dumpedBodies(path) {
     raw = readFileSync(path, 'utf8')
   } catch (error) {
     console.error(`cannot read ${path}: ${String(error)}`)
+    console.error('the switch has to reach the process that sends the chat, which means restarting the app with it set:')
+    console.error('  1. $env:DSH_WORKBUDDY_WIRE_DUMP=1        (or a full path to a file in a directory that exists)')
+    console.error('  2. quit the app completely, tray included, then relaunch it from THIS window so it inherits the variable')
+    console.error(`  3. reproduce one refusal, then rerun with --body (no value) — it resolves the same path the writer uses`)
+    const fallback = resolveWireDumpPath()
+    console.error(fallback === undefined
+      ? `  this window has no DSH_WORKBUDDY_WIRE_DUMP set, so the default cannot be named`
+      : `  from this window the switch resolves to: ${fallback}`)
     return []
   }
   const cases = []
@@ -280,8 +294,15 @@ console.log(`credential: domain=${domain} uid=${credential.uid === '' ? '(none)'
 
 const templatesDir = arg('templates', DEFAULT_TEMPLATES)
 const model = arg('model', 'auto')
-const bodyPath = arg('body')
+// A bare `--body` means "the file the switch names", so the replay side never
+// has to be told a path the writer already resolved.
+const bodyArg = arg('body')
+const bodyPath = bodyArg === true ? resolveWireDumpPath() : bodyArg
 const bisect = arg('bisect', false) === true
+if (bodyArg === true && bodyPath === undefined) {
+  console.error('--body without a value needs DSH_WORKBUDDY_WIRE_DUMP set in this window; pass a path instead')
+  process.exit(1)
+}
 const cases = typeof bodyPath === 'string' ? dumpedBodies(bodyPath) : matrix(templatesDir, model)
 if (cases.length === 0) {
   console.error('nothing to probe')

@@ -19,7 +19,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { WorkBuddyCredential } from '../src/auth.ts'
-import { describeUpstreamRejection, WorkBuddyUpstreamClient } from '../src/upstream.ts'
+import { describeUpstreamRejection, resolveWireDumpPath, WorkBuddyUpstreamClient } from '../src/upstream.ts'
 import type { ChatIdentity } from '../src/client-identity.ts'
 
 const CN: WorkBuddyCredential = {
@@ -259,5 +259,51 @@ describe('chat always asks for a streaming answer', () => {
     const wire = captureFetch('{}')
     await client().chatStream(CN, 'not json at all')
     expect(wire.last()[1].body).toBe('not json at all')
+  })
+})
+
+/**
+ * The switch has to survive being operated by a human under pressure.
+ *
+ * Both traps below were live on the first attempt: `C:/tmp/wire.jsonl` does not
+ * exist on Windows, and `appendFileSync` into a missing directory throws — which
+ * the writer swallows, so the operator sets the switch, reproduces the refusal,
+ * and finds no file and no reason. `=1` is therefore meaningful, and the parent
+ * directory is created.
+ */
+describe('the wire dump resolves a path a human can actually find', () => {
+  const saved = process.env['DSH_WORKBUDDY_WIRE_DUMP']
+
+  afterEach(() => {
+    if (saved === undefined) delete process.env['DSH_WORKBUDDY_WIRE_DUMP']
+    else process.env['DSH_WORKBUDDY_WIRE_DUMP'] = saved
+  })
+
+  it('is off when unset or empty', () => {
+    delete process.env['DSH_WORKBUDDY_WIRE_DUMP']
+    expect(resolveWireDumpPath()).toBeUndefined()
+    process.env['DSH_WORKBUDDY_WIRE_DUMP'] = '   '
+    expect(resolveWireDumpPath()).toBeUndefined()
+  })
+
+  it('treats 1 / true as the OS temporary directory', () => {
+    for (const value of ['1', 'true', 'TRUE']) {
+      process.env['DSH_WORKBUDDY_WIRE_DUMP'] = value
+      expect(resolveWireDumpPath()).toBe(join(tmpdir(), 'dsh-workbuddy-wire.jsonl'))
+    }
+  })
+
+  it('passes any other value through verbatim', () => {
+    process.env['DSH_WORKBUDDY_WIRE_DUMP'] = 'C:/some/where/wire.jsonl'
+    expect(resolveWireDumpPath()).toBe('C:/some/where/wire.jsonl')
+  })
+
+  it('creates a missing parent directory instead of failing silently', async () => {
+    const target = join(mkdtempSync(join(tmpdir(), 'wb-wire-')), 'nested', 'deeper', 'wire.jsonl')
+    process.env['DSH_WORKBUDDY_WIRE_DUMP'] = target
+    captureFetch('{"code":11128,"msg":"blocked"}', false, 400)
+    await client().chatStream(CN, JSON.stringify({ model: 'm', messages: [{ role: 'user', content: 'hi' }] }))
+    expect(existsSync(target)).toBe(true)
+    expect(readFileSync(target, 'utf8')).toContain('11128')
   })
 })
