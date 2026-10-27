@@ -2,7 +2,7 @@
   "name": "@venshell/dsh-workbuddy-connect",
   "displayName": "DSH WorkBuddy Connect",
   "description": "将 WorkBuddy 桌面 App 包含的模型自动接入 DeepSeek Harness — bring WorkBuddy desktop app models into DeepSeek Harness with zero configuration.",
-  "version": "0.8.2",
+  "version": "0.8.3",
   "author": "Corrine Hu <corrinehu@gmail.com> (original author)",
   "contributors": [
     { "name": "Venshell", "url": "https://github.com/Venshell" }

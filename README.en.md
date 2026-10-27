@@ -66,7 +66,7 @@ verbatim:
 ```text
 Please install and verify the DSH (DeepSeek Harness) plugin dsh-workbuddy-connect for me (project: https://github.com/Venshell/dsh-workbuddy-connect).
 Start by reading the project README and confirming which interface I actually use (Web / Desktop / TUI) and its DSH core version — for the Desktop app, the bundled core, never the standalone CLI's version.
-Then install from the official npm package per the version mapping (0.2.1-rc.3 -> 0.8.2, 0.2.1-rc.2 -> 0.7.9, 0.2.1-rc.1 -> 0.7.7, 0.2.0-rc.2 -> 0.7.6, rc.1 -> 0.7.0, 0.1.5-0.1.7 -> 0.6.5): if my core is 0.2.1-rc.3 or newer, prefer installing @venshell/dsh-workbuddy-connect from the plugin page; otherwise pin the version from the command line. On some Desktop distributions (the official Electron app in particular) the profile is app-managed and rules vary by distribution — check mine first, then explore its compliant install route, but never bypass its validation.
+Then install from the official npm package per the version mapping (0.2.1-rc.3 -> 0.8.3, 0.2.1-rc.2 -> 0.7.9, 0.2.1-rc.1 -> 0.7.7, 0.2.0-rc.2 -> 0.7.6, rc.1 -> 0.7.0, 0.1.5-0.1.7 -> 0.6.5): if my core is 0.2.1-rc.3 or newer, prefer installing @venshell/dsh-workbuddy-connect from the plugin page; otherwise pin the version from the command line. On some Desktop distributions (the official Electron app in particular) the profile is app-managed and rules vary by distribution — check mine first, then explore its compliant install route, but never bypass its validation.
 Ask for my consent and make backups before changing any local files or configuration.
 After installing, verify the WorkBuddy group appears in the model picker and walk me through one short conversation.
 If the Desktop install still fails generation validation (e.g. the @types/retry false positive), report it honestly, reference upstream dataelement/dsh-desktop#688, and suggest switching to the standalone Web / TUI — do not modify dependency packages or bypass the check.
@@ -77,8 +77,8 @@ If the Desktop install still fails generation validation (e.g. the @types/retry 
 The package is published on npm: [`@venshell/dsh-workbuddy-connect`](https://www.npmjs.com/package/@venshell/dsh-workbuddy-connect).
 
 ```sh
-# Web (pin per your actual core — example: 0.2.1-rc.3 -> 0.8.2)
-dsh plugin --profile web add @venshell/dsh-workbuddy-connect@0.8.2
+# Web (pin per your actual core — example: 0.2.1-rc.3 -> 0.8.3)
+dsh plugin --profile web add @venshell/dsh-workbuddy-connect@0.8.3
 dsh web
 
 # TUI (example for a 0.1.x core; that profile needs pnpm 11, e.g. npx pnpm@11)
@@ -322,7 +322,7 @@ core. The newest npm release is not necessarily right for you, so match your act
 
 | DSH core | Recommended plugin | Notes |
 |---|---|---|
-| `0.2.1-rc.3` and later, below `0.3.0` | `0.8.2` | With `engines.dsh` declared, a core upgrade inside the same `0.2.x` line no longer needs a new plugin |
+| `0.2.1-rc.3` and later, below `0.3.0` | `0.8.3` | With `engines.dsh` declared, a core upgrade inside the same `0.2.x` line no longer needs a new plugin |
 | `0.2.1-rc.2` | `0.7.9` | Targets this core only; unlike `0.2.0-rc.2`, so check the version bundled in your app |
 | `0.2.1-rc.1` | `0.7.7` | The core moved to pi-ai 1.3.0, so a leftover 0.87.1 overrides entry must be removed |
 | `0.2.0-rc.2` | `0.7.6` | Previous core line; do not stay on 0.7.2, which has a registry regression |
@@ -373,6 +373,7 @@ Full records at [releases](https://github.com/Venshell/dsh-workbuddy-connect/rel
 
 | Version | Highlights |
 |---|---|
+| `0.8.3` | Documentation only: the npm page and the packaged READMEs now ship the rewritten install chapter, which lists four routes and adds the plugin-page install; the code is byte-identical to 0.8.2 |
 | `0.8.2` | Fixes the CN "request blocked" failure: conversations answered `11128` and some requests answered `11101`, both fixed; adds the official client's per-request identity and trace headers; adds the `engines.dsh` range |
 | `0.8.1` | Adapts to DSH 0.2.1-rc.3: seven service peers and dev dependencies narrow to rc.3, the bundled official atomic-write helper upgrades along |
 | `0.8.0` | Fixes three CN "request blocked" / missing-model failures: `developer` → `system`, brand-word cleaning, and a two-source model catalog |
