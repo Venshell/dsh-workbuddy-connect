@@ -44,20 +44,28 @@ copilot.tencent.com · chat/completions（SSE）
 
 **前置**：本机已安装并登录 WorkBuddy（国内版）或 WorkBuddy AI 桌面 App。插件复用 App 的登录状态。
 
-### 方式一：交给本机已有的 Agent（推荐）
+### 方式一：插件页按包名安装（最简单）
+
+DSH 的插件页支持直接按 **npm 包名**安装：打开插件管理页 → 安装 / 添加插件 → 输入
+`@venshell/dsh-workbuddy-connect` → 确认。宿主自己从 npm 拉取并登记，不需要命令行。
+
+装到的是 npm 上的 `latest`。内核低于 `0.2.1-rc.3` 时不要走这条路，按「版本兼容」表用命令行固定
+版本安装；Desktop 若由 App 管理 profile，就在 App 自己的插件页里装。
+
+### 方式二：交给本机已有的 Agent
 
 任何具备终端与文件操作能力的助手（DSH Agent、Codex、Claude Code、Cursor 等）都行，把下面这段话原样发给它：
 
 ```text
 请帮我安装并验证 DSH（DeepSeek Harness）插件 dsh-workbuddy-connect（项目地址：https://github.com/Venshell/dsh-workbuddy-connect）：
 先阅读项目 README，确认我实际使用的界面（Web / Desktop / TUI）与 DSH 内核版本，桌面版以 App 内置核心为准，不要用独立 CLI 的版本代替；
-再按版本对应关系从 npm 正式包安装（0.2.1-rc.3→0.8.2、0.2.1-rc.2→0.7.9、0.2.1-rc.1→0.7.7、0.2.0-rc.2→0.7.6、rc.1→0.7.0、0.1.5–0.1.7→0.6.5），优先走本机受支持的非插件市场渠道；部分 Desktop 发行版（尤其官方 Electron 版）的 profile 由 App 管理，各发行版规则未必相同，先确认我所用的发行版，再探查其合规的安装方式，但不得绕过其校验；
+再按版本对应关系从 npm 正式包安装（0.2.1-rc.3→0.8.2、0.2.1-rc.2→0.7.9、0.2.1-rc.1→0.7.7、0.2.0-rc.2→0.7.6、rc.1→0.7.0、0.1.5–0.1.7→0.6.5）：内核符合 0.2.1-rc.3 及以上时，优先在插件页按包名 @venshell/dsh-workbuddy-connect 安装；其余情况用命令行固定版本装。部分 Desktop 发行版（尤其官方 Electron 版）的 profile 由 App 管理，各发行版规则未必相同，先确认我所用的发行版，再探查其合规的安装方式，但不得绕过其校验；
 任何本地文件或配置改动，先征得我同意并做好备份；
 装完后验证模型选择器里出现 WorkBuddy 分组，并陪我完成一次简短对话；
 若 Desktop 安装仍因 generation 校验失败（如 @types/retry 误报），请如实报告、参照上游 dataelement/dsh-desktop#688，并建议我改用独立的 Web / TUI，不要修改依赖包或绕过校验。
 ```
 
-### 方式二：npm CLI
+### 方式三：npm CLI
 
 包发布在 npm：[`@venshell/dsh-workbuddy-connect`](https://www.npmjs.com/package/@venshell/dsh-workbuddy-connect)。
 
@@ -71,7 +79,7 @@ dsh plugin --profile dsh-tui add dsh-workbuddy-connect@0.6.5
 dsh --profile dsh-tui
 ```
 
-### 方式三：从源码
+### 方式四：从源码
 
 ```sh
 dsh plugin --profile web add github:Venshell/dsh-workbuddy-connect
@@ -85,8 +93,9 @@ dsh plugin --profile web add github:Venshell/dsh-workbuddy-connect
 > 启动失败（`events is not iterable`）；推理档位的手动检测只有 Web / Desktop 提供。
 
 > **Desktop**：部分发行版（尤其官方 Electron 版）的 `desktop` profile 由 App 管理，官方版会直接拒绝
-> 独立 CLI 的 `--profile desktop`；其他发行版规则未必相同。可以让 Agent 探查是否有合规的非市场安装
-> 路径，但**不要盲改 App 管理的目录，也不要绕过其校验**。
+> 独立 CLI 的 `--profile desktop`；其他发行版规则未必相同。这类发行版的正确装法是在 **App 自己的
+> 插件页**里按包名安装，或让 Agent 探查该发行版合规的路径；**不要盲改 App 管理的目录，也不要绕过
+> 其校验**。
 
 **验证**：重启对应界面后，模型选择器出现「WorkBuddy / WorkBuddy AI」分组（只装一版就只验对应一组），
 从分组里选一个模型完成一次简短对话、能正常回复，才算装成功。
