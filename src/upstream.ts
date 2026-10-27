@@ -7,7 +7,7 @@
  * @module dsh-workbuddy-connect/upstream
  */
 
-import { appendFileSync, mkdirSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { randomBytes, randomUUID } from 'node:crypto'
@@ -802,6 +802,18 @@ function dumpRejectedWire(record: { status: number; body: string; response: stri
 const WIRE_DUMP_DEFAULT_NAME = 'dsh-workbuddy-wire.jsonl'
 
 /**
+ * Marker file that turns the dump on without an environment variable.
+ *
+ * The variable only reaches the app if the app is launched from the shell that
+ * set it, and on Windows the app is normally started from the tray or the Start
+ * menu — measured the hard way: the switch was set, the app was restarted from
+ * its own shortcut, and the switch simply was not there. A file in the same
+ * directory is observable from any launch path, so `New-Item <tmp>\<marker>`
+ * followed by an ordinary restart is enough.
+ */
+const WIRE_DUMP_MARKER_NAME = 'dsh-workbuddy-wire.enable'
+
+/**
  * Resolve `DSH_WORKBUDDY_WIRE_DUMP` to a file path, or `undefined` when off.
  *
  * Exported so the replay side (`scripts/cn-refusal-probe.mjs`) can name the
@@ -810,7 +822,11 @@ const WIRE_DUMP_DEFAULT_NAME = 'dsh-workbuddy-wire.jsonl'
  */
 export function resolveWireDumpPath(): string | undefined {
   const raw = process.env['DSH_WORKBUDDY_WIRE_DUMP']?.trim() ?? ''
-  if (raw === '') return undefined
+  if (raw === '') {
+    // No variable: the marker file decides, so a restart from any shortcut is
+    // enough to arm the capture.
+    return existsSync(join(tmpdir(), WIRE_DUMP_MARKER_NAME)) ? join(tmpdir(), WIRE_DUMP_DEFAULT_NAME) : undefined
+  }
   if (raw === '1' || raw.toLowerCase() === 'true') return join(tmpdir(), WIRE_DUMP_DEFAULT_NAME)
   return raw
 }
@@ -1988,6 +2004,46 @@ export function prepareCnChatBody(source: string): string {
 const SANITIZE_BRAND_RE = /DeepSeek[ \t]+Harness/g
 
 /**
+ * A bare `@` used as a mention marker, as it appears in the shipped path note.
+ *
+ * The CN gateway rejects `@` plus the "relative paths resolve from the workspace
+ * root" clause with the same 400 / 11128 it uses for a branded prompt. Measured
+ * on a live CN account, one variable at a time, against the captured request:
+ *
+ * - that paragraph alone refuses; the same paragraph with `@` spelled `at`, or
+ *   as `＠`, or as `U+0040`, is accepted, on the full 59 KB request;
+ * - the clause without `@` is accepted, and `@` without the clause is accepted,
+ *   so neither is objectionable on its own;
+ * - every other `@` shape is accepted next to that clause: `@file`,
+ *   `@scope/pkg`, `someone@example.com`, and `@"..."`. Only the bare token —
+ *   `@` surrounded by whitespace — is refused.
+ *
+ * So the rule is deliberately narrow: a trailing space, a leading space or the
+ * start of the text, nothing else. Package names, paths, identifiers and
+ * addresses keep their exact form, which is the same constraint the brand rule
+ * has carried since #574.
+ *
+ * The replacement is the full-width `＠` rather than a spoken-out codepoint:
+ * the sentence still reads as "tokens prefixed with @" to a model, so the
+ * instruction survives intact, and the two characters are visually identical.
+ */
+const SANITIZE_MENTION_AT_RE = /(^|\s)@(?=\s|$)/g
+
+/** Replace a bare mention `@` with `＠`, leaving every other `@` alone. */
+function neutralizeBareMention(text: string): string {
+  if (!SANITIZE_MENTION_AT_RE.test(text)) return text
+  // `test` on a /g regex advances lastIndex; reset before `replace` so a second
+  // carrier in the same body is not skipped.
+  SANITIZE_MENTION_AT_RE.lastIndex = 0
+  return text.replace(SANITIZE_MENTION_AT_RE, (_match: string, lead: string) => `${lead}＠`)
+}
+
+/** Every rewrite that applies to harness-authored instruction text. */
+function sanitizeInstructionText(text: string): string {
+  return neutralizeBareMention(shortenBrand(text))
+}
+
+/**
  * Shorten the harness brand to its first word in instruction text.
  *
  * The CN gateway answers 400 / 11128 for a system (or developer) message that
@@ -2008,6 +2064,11 @@ const SANITIZE_BRAND_RE = /DeepSeek[ \t]+Harness/g
  * user. `user` and `tool` messages are never touched, so a quoted brand name
  * inside a prompt stays quoted verbatim.
  *
+ * The `@` rule rides on the same scope for the same reason: the offending text
+ * is the shipped note about `@`-prefixed paths, which is instruction prose the
+ * harness writes, and a user quoting an `@` mention in their own message must
+ * keep it. Measurement and limits are on {@link SANITIZE_MENTION_AT_RE}.
+ *
  * Three carriers, because a prompt reaches the wire in more than one shape and
  * leaving any of them alone re-opens the same rejection:
  *
@@ -2019,14 +2080,15 @@ const SANITIZE_BRAND_RE = /DeepSeek[ \t]+Harness/g
  * 3. `tools[].function.description`, the largest block of harness-authored
  *    prose in a typical request.
  *
- * Only the brand spelling changes, and only where {@link SANITIZE_BRAND_RE}
- * matches — identifiers, paths and package names keep their exact form.
+ * Only the brand spelling and a bare mention `@` change, and only where
+ * {@link SANITIZE_BRAND_RE} / {@link SANITIZE_MENTION_AT_RE} match —
+ * identifiers, paths and package names keep their exact form.
  */
 function sanitizeFingerprint(obj: Record<string, unknown>): void {
   for (const message of instructionMessages(obj)) {
     const content = message['content']
     if (typeof content === 'string') {
-      message['content'] = shortenBrand(content)
+      message['content'] = sanitizeInstructionText(content)
       continue
     }
     if (!Array.isArray(content)) continue
@@ -2036,11 +2098,11 @@ function sanitizeFingerprint(obj: Record<string, unknown>): void {
       if (wrapped['type'] !== 'text' && wrapped['type'] !== 'input_text') continue
       const text = wrapped['text']
       if (typeof text !== 'string') continue
-      wrapped['text'] = shortenBrand(text)
+      wrapped['text'] = sanitizeInstructionText(text)
     }
   }
   for (const description of toolDescriptions(obj)) {
-    description.owner['description'] = shortenBrand(description.text)
+    description.owner['description'] = sanitizeInstructionText(description.text)
   }
 }
 

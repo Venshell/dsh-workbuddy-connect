@@ -335,7 +335,7 @@ async function bisectBody(client, credential, original) {
       if (culprit !== undefined && culprit.text.length > 800) {
         const lines = culprit.text.split('\n').map(line => line.trim()).filter(line => line !== '')
         if (lines.length > 1) {
-          console.log(`    narrowing paragraph #${culprit.index} by line (${lines.length})`)
+          console.log(`    narrowing paragraph #${culprit.index + 1} by line (${lines.length})`)
           const asLines = async texts => send({ ...original, messages: [{ ...systemMessage, content: texts.join('\n') }, lastUser] })
           const inner = await narrowUnits(asLines, lines, 'lines')
           if (inner !== undefined) culprit = { index: culprit.index, text: inner.text }
@@ -345,7 +345,8 @@ async function bisectBody(client, credential, original) {
         console.log('    => no single passage reproduces it: the text needs to be present together, or the size of the prompt is the trigger')
       } else {
         attributed = true
-        console.log(`    => paragraph #${culprit.index} of ${paragraphs.length} is the cause:`)
+        // 1-based, so the number here is the one a person counts to.
+        console.log(`    => paragraph #${culprit.index + 1} of ${paragraphs.length} is the cause:`)
         console.log(`       ${JSON.stringify(culprit.text.slice(0, 400))}${culprit.text.length > 400 ? '…' : ''}`)
         // The paragraph names a *place*, not a rule. Change one thing about it
         // at a time: whichever variant clears the refusal is the rule, and that
@@ -507,4 +508,5 @@ console.log('- `official` fails too => no prompt content passes; the refusal is 
 console.log('- a bare `11101` "Non-stream chat request" => something stripped `stream: true` off the body; `chatStream` sets it, so this means the flag never reached the wire.')
 console.log('- every case passes on a body captured from a refused chat => the refusal depends on something outside the body (headers on that particular request, or the account state at that moment).')
 console.log('- `--bisect` marks with `<==` the single removal that turns the refusal into a 200.')
+console.log('- a refusal that goes away on its own within minutes => the block is time-limited. An accepted replay then proves nothing about the trigger; re-run against a fresh capture when it comes back.')
 console.log('- in `--bisect`, "the system message is the carrier" means the request, the tools and the history are all fine and one passage of the system prompt is the trigger; the paragraph it prints is the smallest one that still refuses on its own.')

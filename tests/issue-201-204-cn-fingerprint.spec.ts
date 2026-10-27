@@ -158,3 +158,73 @@ describe('prepareCnChatBody (#204): harness brand fingerprint', () => {
     expect(prepareCnChatBody(source)).toBe(source)
   })
 })
+
+/**
+ * The `@` mention pin.
+ *
+ * Measured on a live CN account against the captured 59 KB request: the shipped
+ * note about `@`-prefixed paths drew 400 / 11128, and spelling that one bare
+ * `@` as `＠` (or `U+0040`) cleared it while leaving the rest of the request
+ * byte-identical. The same note with its `@` removed is also accepted, and the
+ * "relative paths resolve from the workspace root" clause without an `@` is
+ * accepted too — neither is objectionable alone, which is why the rewrite keeps
+ * the sentence and changes only the token.
+ *
+ * Only the bare token is a trigger: `@file`, `@scope/pkg`, `someone@example.com`
+ * and `@"..."` were each accepted next to that same clause, so the pattern
+ * requires whitespace on both sides and nothing else.
+ */
+describe('prepareCnChatBody: a bare @ mention', () => {
+  const NOTE = 'Tokens prefixed with @ are paths the user explicitly referenced. Relative paths resolve from the workspace root.'
+
+  it('spells the bare token as ＠ and keeps the sentence', () => {
+    const body = wire({ messages: [{ role: 'system', content: NOTE }] })
+    expect(body.messages[0].content).toBe(NOTE.replace('with @ are', 'with ＠ are'))
+  })
+
+  it('rewrites every occurrence in the same carrier', () => {
+    // Guards the /g regex state: `test` advances lastIndex, so a second match in
+    // one string is only reached if it is reset before `replace`.
+    const body = wire({ messages: [{ role: 'system', content: '@ one, @ two, @ three' }] })
+    expect(body.messages[0].content).toBe('＠ one, ＠ two, ＠ three')
+  })
+
+  it('leaves an @ that is part of a word, a path or an address alone', () => {
+    const intact = [
+      'Tokens prefixed with @file are paths.',
+      'Packages look like @deepseek-ai/dsh-core.',
+      'Write to someone@example.com.',
+      'The form @"..." quotes a path.',
+    ]
+    const body = wire({ messages: [{ role: 'system', content: intact.join(' ') }] })
+    expect(body.messages[0].content).toBe(intact.join(' '))
+  })
+
+  it('applies to multipart text parts and not to sibling parts', () => {
+    const image = { type: 'image_url', image_url: { url: 'data:image/png;base64,AA' } }
+    const body = wire({ messages: [{ role: 'system', content: [{ type: 'text', text: 'with @ are' }, image] }] })
+    expect(body.messages[0].content[0].text).toBe('with ＠ are')
+    expect(body.messages[0].content[1]).toEqual(image)
+  })
+
+  it('applies to a harness-authored tool description', () => {
+    const body = wire({
+      messages: [{ role: 'user', content: 'hi' }],
+      tools: [{ type: 'function', function: { name: 'read_file', description: 'with @ are paths' } }],
+    })
+    expect(body.tools[0].function.description).toBe('with ＠ are paths')
+  })
+
+  it('never touches the user’s own words', () => {
+    const body = wire({
+      messages: [
+        { role: 'system', content: NOTE },
+        { role: 'user', content: '我用 @ 引用了一个文件' },
+        { role: 'tool', content: 'with @ are' },
+      ],
+    })
+    expect(body.messages[0].content).toContain('＠ are')
+    expect(body.messages[1].content).toBe('我用 @ 引用了一个文件')
+    expect(body.messages[2].content).toBe('with @ are')
+  })
+})

@@ -14,7 +14,7 @@
  * 2. The surfaced error keeps the upstream's own `code`/`msg`, because the
  *    display sentence alone says nothing about which rule fired.
  */
-import { existsSync, mkdtempSync, readFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -273,17 +273,58 @@ describe('chat always asks for a streaming answer', () => {
  */
 describe('the wire dump resolves a path a human can actually find', () => {
   const saved = process.env['DSH_WORKBUDDY_WIRE_DUMP']
+  const MARKER = join(tmpdir(), 'dsh-workbuddy-wire.enable')
+
+  /** Run `fn` with no marker file present, restoring whatever was there. */
+  function withoutMarker<T>(fn: () => T): T {
+    const had = existsSync(MARKER)
+    if (had) unlinkSync(MARKER)
+    try {
+      return fn()
+    } finally {
+      if (had) writeFileSync(MARKER, '')
+    }
+  }
 
   afterEach(() => {
     if (saved === undefined) delete process.env['DSH_WORKBUDDY_WIRE_DUMP']
     else process.env['DSH_WORKBUDDY_WIRE_DUMP'] = saved
   })
 
-  it('is off when unset or empty', () => {
-    delete process.env['DSH_WORKBUDDY_WIRE_DUMP']
-    expect(resolveWireDumpPath()).toBeUndefined()
-    process.env['DSH_WORKBUDDY_WIRE_DUMP'] = '   '
-    expect(resolveWireDumpPath()).toBeUndefined()
+  it('is off when unset or empty, and no marker file is present', () => {
+    withoutMarker(() => {
+      delete process.env['DSH_WORKBUDDY_WIRE_DUMP']
+      expect(resolveWireDumpPath()).toBeUndefined()
+      process.env['DSH_WORKBUDDY_WIRE_DUMP'] = '   '
+      expect(resolveWireDumpPath()).toBeUndefined()
+    })
+  })
+
+  it('is armed by a marker file, so a restart from any shortcut captures', () => {
+    // The variable only reaches the app when the app is launched from the shell
+    // that set it; a normal Start-menu restart silently loses it. The marker is
+    // visible from every launch path.
+    withoutMarker(() => {
+      delete process.env['DSH_WORKBUDDY_WIRE_DUMP']
+      writeFileSync(MARKER, '')
+      try {
+        expect(resolveWireDumpPath()).toBe(join(tmpdir(), 'dsh-workbuddy-wire.jsonl'))
+      } finally {
+        unlinkSync(MARKER)
+      }
+    })
+  })
+
+  it('still lets the variable win over the marker', () => {
+    withoutMarker(() => {
+      writeFileSync(MARKER, '')
+      try {
+        process.env['DSH_WORKBUDDY_WIRE_DUMP'] = 'C:/elsewhere/wire.jsonl'
+        expect(resolveWireDumpPath()).toBe('C:/elsewhere/wire.jsonl')
+      } finally {
+        unlinkSync(MARKER)
+      }
+    })
   })
 
   it('treats 1 / true as the OS temporary directory', () => {
