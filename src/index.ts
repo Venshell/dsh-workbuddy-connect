@@ -118,6 +118,7 @@ export {
 } from './auth.ts'
 export {
   classifyUpstreamError,
+  describeUpstreamRejection,
   modelWithCurrentPromotion,
   normalizeCredits,
   parseModelCatalog,

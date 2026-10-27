@@ -7,6 +7,7 @@
  * @module dsh-workbuddy-connect/upstream
  */
 
+import { appendFileSync } from 'node:fs'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { appUserAgent, resolveAppVersion, type AppVersionInfo } from './app-version.ts'
 import { chatUserAgent, fallbackChatIdentity, resolveChatIdentity, type ChatIdentity } from './client-identity.ts'
@@ -759,6 +760,32 @@ function envelopeError(status: number, envelope: Envelope): Error {
   return new Error(`workbuddy upstream ${kind} (http ${status}): ${envelope.msg.slice(0, 160)}`)
 }
 
+/**
+ * Diagnostic sink: append the exact chat body that the upstream refused.
+ *
+ * Every channel- and body-level objection on the CN endpoint arrives as the
+ * same `11128` + 「请求被拦截，请重新发送」, and the response never says which
+ * rule fired — so the only way to attribute a refusal is to look at the bytes
+ * that were sent. Bisecting a prompt by hand needs that body, and
+ * `scripts/cn-refusal-probe.mjs` replays it.
+ *
+ * Off unless `DSH_WORKBUDDY_WIRE_DUMP` names a file, and only ever written on
+ * failure. The record holds the post-preparation body, which *is* the user's
+ * conversation: that is why the switch is opt-in rather than a rotation log.
+ * Headers are never written, so the bearer token cannot leak into the file. A
+ * write failure is swallowed — diagnostics must not turn one failed request
+ * into two.
+ */
+function dumpRejectedWire(record: { status: number; body: string; response: string }): void {
+  const target = process.env['DSH_WORKBUDDY_WIRE_DUMP']?.trim() ?? ''
+  if (target === '') return
+  try {
+    appendFileSync(target, `${JSON.stringify({ at: new Date().toISOString(), ...record })}\n`, 'utf8')
+  } catch {
+    // Best-effort by design.
+  }
+}
+
 /** Provenance of one successful catalog fetch, surfaced by the status card. */
 export interface WorkBuddyCatalogFetch {
   fetchedAtMs: number
@@ -931,19 +958,22 @@ export class WorkBuddyUpstreamClient {
       identity = fallbackChatIdentity(region)
       userAgent = chatUserAgent(identity, region)
     }
+    const sent = region === 'global' ? prepareInternationalChatBody(bodyJson) : prepareCnChatBody(bodyJson)
     let response: Response
     try {
       response = await fetch(`${chatBase(credential)}/v2/chat/completions`, {
         method: 'POST',
         headers: { ...chatHeaders(credential, userAgent, identity.clientVersion), 'Authorization': `Bearer ${credential.accessToken}` },
-        body: region === 'global' ? prepareInternationalChatBody(bodyJson) : prepareCnChatBody(bodyJson),
+        body: sent,
         ...signal === undefined ? {} : { signal },
       })
     } catch (error: unknown) {
+      dumpRejectedWire({ status: 0, body: sent, response: `transport error: ${String(error)}` })
       return { ok: false, status: 0, kind: 'server', message: `transport error: ${String(error)}` }
     }
     if (response.ok) return { ok: true, response }
     const text = (await response.text()).slice(0, ERROR_BODY_LIMIT)
+    dumpRejectedWire({ status: response.status, body: sent, response: text })
     return {
       ok: false,
       status: response.status,

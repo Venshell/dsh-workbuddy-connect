@@ -14,6 +14,9 @@
  * 2. The surfaced error keeps the upstream's own `code`/`msg`, because the
  *    display sentence alone says nothing about which rule fired.
  */
+import { existsSync, mkdtempSync, readFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { WorkBuddyCredential } from '../src/auth.ts'
 import { describeUpstreamRejection, WorkBuddyUpstreamClient } from '../src/upstream.ts'
@@ -165,5 +168,53 @@ describe('describeUpstreamRejection keeps the machine fields', () => {
   it('returns undefined for a body that is not an envelope', () => {
     expect(describeUpstreamRejection('502 Bad Gateway')).toBeUndefined()
     expect(describeUpstreamRejection('{ invalid json')).toBeUndefined()
+  })
+})
+
+describe('the wire dump stays off unless asked for', () => {
+  /** A throwaway file path per test, so the suite never touches the real tree. */
+  function dumpPath(): string {
+    return join(mkdtempSync(join(tmpdir(), 'wb-wire-')), 'wire.jsonl')
+  }
+
+  afterEach(() => {
+    delete process.env['DSH_WORKBUDDY_WIRE_DUMP']
+  })
+
+  it('writes nothing when the variable is unset', async () => {
+    const path = dumpPath()
+    captureFetch('{"code":11128,"msg":"blocked"}', false, 400)
+    await client().chatStream(CN, JSON.stringify({ model: 'm', messages: [{ role: 'user', content: 'hi' }] }))
+    expect(existsSync(path)).toBe(false)
+  })
+
+  it('records the body that was sent, and only on failure', async () => {
+    const path = dumpPath()
+    process.env['DSH_WORKBUDDY_WIRE_DUMP'] = path
+    const okFetch = captureFetch('{}')
+    await client().chatStream(CN, JSON.stringify({ model: 'm', messages: [{ role: 'user', content: 'hi' }] }))
+    expect(existsSync(path)).toBe(false)
+    expect(okFetch.all().length).toBe(1)
+
+    captureFetch('{"code":11128,"msg":"请求被拦截，请重新发送"}', false, 400)
+    await client().chatStream(CN, JSON.stringify({ model: 'm', messages: [{ role: 'user', content: 'hi' }] }))
+    const line = readFileSync(path, 'utf8').trim()
+    const record = JSON.parse(line) as { status: number; body: string; response: string; at: string }
+    expect(record.status).toBe(400)
+    expect(record.response).toContain('11128')
+    // The recorded body is the post-preparation one, which is what the probe replays.
+    expect(JSON.parse(record.body).messages).toEqual([{ role: 'user', content: 'hi' }])
+  })
+
+  it('never records a header or the access token', async () => {
+    const path = dumpPath()
+    process.env['DSH_WORKBUDDY_WIRE_DUMP'] = path
+    captureFetch('{"code":11128,"msg":"blocked"}', false, 400)
+    await client().chatStream(CN, JSON.stringify({ model: 'm', messages: [{ role: 'user', content: 'hi' }] }))
+    const line = readFileSync(path, 'utf8')
+    // Headers are not part of the record at all, so the bearer cannot leak.
+    for (const name of ['Authorization', 'Bearer', 'X-Conversation-ID', 'Content-Type', 'X-Request-ID']) {
+      expect(line, name).not.toContain(name)
+    }
   })
 })
