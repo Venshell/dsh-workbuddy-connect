@@ -18,6 +18,14 @@
  *                     `resources/app.asar.unpacked/resources/templates`.
  * - `--body <path>`   replay one body captured by `DSH_WORKBUDDY_WIRE_DUMP`,
  *                     i.e. the exact request DSH made when it was refused.
+ * - `--bisect`        with `--body`: replay it, then remove one field at a time
+ *                     and mark the removal that clears the refusal. Use this
+ *                     once the matrix below passes on every case — that already
+ *                     rules out the prompt, the account and the channel, so
+ *                     what is left can only be the request's shape.
+ *
+ * Live status: the matrix passes 5/5 on a CN account as of the `stream: true`
+ * guarantee, which is why the interesting run is now the `--body` one.
  *
  * Each case costs a few credits (the successful ones stream one short reply;
  * the stream is cancelled as soon as headers arrive).
@@ -161,6 +169,97 @@ async function runCase(client, credential, item) {
   }
 }
 
+/** One line for an outcome, in the same shape the matrix prints. */
+function describeOutcome(outcome) {
+  return outcome.ok ? '200 accepted' : `${outcome.status} ${outcome.kind} — ${outcome.reason}`
+}
+
+/** Top-level keys the bisect never drops: the model, the messages, the stream flag. */
+const KEEP_KEYS = new Set(['model', 'messages', 'stream'])
+
+/**
+ * Attribute a captured body by subtraction.
+ *
+ * A `11128` says a rule fired, never which one, and the shapes that clear it
+ * are not enumerable from the response — the matrix in {@link matrix} proves
+ * that much: five prompts that differ only in wording all pass, so the answer
+ * lives in whatever the real request carries *besides* the conversational text.
+ *
+ * So this replays the captured body, then removes one thing at a time and keeps
+ * the removal that flips the answer to `200`. Top-level fields go first; then
+ * the two structures that grow with a real conversation (the message history
+ * and the tool block), the latter narrowed by halves so a large tool set costs
+ * a handful of requests rather than one per tool.
+ *
+ * Every step is a real request against the account, and each accepted one
+ * streams a short reply, so the total is bounded by the number of top-level
+ * fields plus the log2 of the tool count.
+ */
+async function bisectBody(client, credential, original) {
+  const send = async body => runCase(client, credential, { body })
+
+  const full = await send(original)
+  console.log(`    replay                       ${describeOutcome(full)}`)
+  if (full.ok) {
+    console.log('    => the captured body is accepted now; nothing to attribute')
+    return
+  }
+
+  let attributed = false
+  for (const key of Object.keys(original)) {
+    if (KEEP_KEYS.has(key)) continue
+    const reduced = { ...original }
+    delete reduced[key]
+    const outcome = await send(reduced)
+    const hit = outcome.ok
+    if (hit) attributed = true
+    console.log(`    drop ${key.padEnd(23)} ${describeOutcome(outcome)}${hit ? '   <== this field' : ''}`)
+  }
+
+  const messages = Array.isArray(original.messages) ? original.messages : []
+  if (messages.length > 1) {
+    const lastUser = [...messages].reverse().find(message => message?.role === 'user')
+    if (lastUser !== undefined) {
+      const outcome = await send({ ...original, messages: [lastUser] })
+      if (outcome.ok) attributed = true
+      console.log(`    keep only the last turn      ${describeOutcome(outcome)}${outcome.ok ? '   <== the history' : ''}`)
+      const firstSystem = messages.find(message => message?.role === 'system')
+      if (firstSystem !== undefined && messages.length > 2) {
+        const withSystem = await send({ ...original, messages: [firstSystem, lastUser] })
+        if (withSystem.ok) attributed = true
+        console.log(`    system + last turn           ${describeOutcome(withSystem)}${withSystem.ok ? '   <== the middle of the history' : ''}`)
+      }
+    }
+  }
+
+  const tools = Array.isArray(original.tools) ? original.tools : []
+  if (tools.length > 0) {
+    const none = await send({ ...original, tools: [] })
+    console.log(`    drop all ${String(tools.length).padEnd(20)} ${describeOutcome(none)}${none.ok ? '   <== the tool block' : ''}`)
+    if (none.ok) {
+      attributed = true
+      if (tools.length > 1) {
+        // Narrow to the first offending tool: keep prefixes, halve the range.
+        let low = 0
+        let high = tools.length
+        while (high - low > 1) {
+          const middle = Math.floor((low + high) / 2)
+          const outcome = await send({ ...original, tools: tools.slice(0, middle) })
+          console.log(`    tools[0..${middle - 1}]${' '.repeat(Math.max(1, 20 - String(middle).length))} ${describeOutcome(outcome)}`)
+          if (outcome.ok) high = middle
+          else low = middle
+        }
+        const name = tools[low]?.function?.name ?? tools[low]?.name ?? '?'
+        console.log(`    => tool #${low} (${name}) is the cause`)
+      }
+    }
+  }
+
+  if (!attributed) {
+    console.log('    => nothing single-field reproduces it: the refusal needs the whole shape (size, ordering, or a header), so capture a second body and compare')
+  }
+}
+
 const client = new WorkBuddyUpstreamClient()
 const store = new WorkBuddyCredentialStore({ refresh: credential => client.refreshToken(credential) })
 let credential
@@ -182,14 +281,31 @@ console.log(`credential: domain=${domain} uid=${credential.uid === '' ? '(none)'
 const templatesDir = arg('templates', DEFAULT_TEMPLATES)
 const model = arg('model', 'auto')
 const bodyPath = arg('body')
+const bisect = arg('bisect', false) === true
 const cases = typeof bodyPath === 'string' ? dumpedBodies(bodyPath) : matrix(templatesDir, model)
 if (cases.length === 0) {
   console.error('nothing to probe')
   process.exit(1)
 }
+if (bisect && typeof bodyPath !== 'string') {
+  // The matrix is built to be bisected by hand, one case at a time; there is
+  // nothing to subtract from it, and running the search would only burn calls.
+  console.error('--bisect needs --body <dump>: it subtracts from a captured request')
+  process.exit(1)
+}
 
 console.log(`\n${cases.length} case(s) on model ${model}; one short reply per accepted case\n`)
 for (const item of cases) {
+  if (bisect) {
+    console.log(`${item.name} — ${item.why}`)
+    try {
+      await bisectBody(client, credential, item.body)
+    } catch (error) {
+      console.log(`    threw: ${String(error)}`)
+    }
+    console.log('')
+    continue
+  }
   let line
   try {
     const outcome = await runCase(client, credential, item)
@@ -207,3 +323,5 @@ console.log('- `minimal` fails => the account, the resolved identity headers, or
 console.log('- `minimal` passes and only a branded case fails => the rewrite is not reaching that carrier.')
 console.log('- `official` fails too => no prompt content passes; the refusal is channel- or account-level.')
 console.log('- a bare `11101` "Non-stream chat request" => something stripped `stream: true` off the body; `chatStream` sets it, so this means the flag never reached the wire.')
+console.log('- every case passes on a body captured from a refused chat => the refusal depends on something outside the body (headers on that particular request, or the account state at that moment).')
+console.log('- `--bisect` marks with `<==` the single removal that turns the refusal into a 200.')
