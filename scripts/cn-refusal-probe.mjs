@@ -35,12 +35,19 @@
  *   node scripts/cn-refusal-probe.mjs
  *   node scripts/cn-refusal-probe.mjs --body wire.jsonl --bisect
  *   node scripts/cn-refusal-probe.mjs --body --bisect
+ *   node scripts/cn-refusal-probe.mjs --body --bisect --index 1
  *   node scripts/cn-refusal-probe.mjs --templates "D:/wbai/WorkBuddyAI/resources/app.asar.unpacked/resources/templates"
  *
  * `DSH_WORKBUDDY_WIRE_DUMP=1` dumps to `<os temp>/dsh-workbuddy-wire.jsonl`, so
  * a bare `--body` resolves that path itself. The switch has to sit in the app's
  * own environment, which means relaunching the app with it set — asking the
  * operator to retype the path afterwards is one more place to get it wrong.
+ *
+ * A dump only stays clean if the probe does not write to it: a refused replay is
+ * dumped exactly like the refusal it is replaying, so one capture plus one
+ * bisect leaves dozens of records and the next run bisects those. The probe
+ * therefore clears the switch for its own process, and replays the earliest
+ * record unless `--index N` (or `--all`) says otherwise.
  */
 
 import { readFileSync } from 'node:fs'
@@ -386,6 +393,71 @@ async function bisectBody(client, credential, original) {
   }
 }
 
+const templatesDir = arg('templates', DEFAULT_TEMPLATES)
+const model = arg('model', 'auto')
+// A bare `--body` means "the file the switch names", so the replay side never
+// has to be told a path the writer already resolved.
+const bodyArg = arg('body')
+const bodyPath = bodyArg === true ? resolveWireDumpPath() : bodyArg
+const bisect = arg('bisect', false) === true
+if (bodyArg === true && bodyPath === undefined) {
+  console.error('--body without a value needs DSH_WORKBUDDY_WIRE_DUMP set in this window; pass a path instead')
+  process.exit(1)
+}
+// The probe must not feed its own replays back into the capture file.
+//
+// Every refused replay is a 400, so each one is dumped exactly like the real
+// request was: one capture plus one bisect turns a one-line file into a few
+// dozen records, and the next run then bisects *those*. Measured on Windows:
+// 503 records in 17 minutes, all of them probe output except the first. The
+// path is resolved above, so turning the switch off here only affects writes.
+if (process.env['DSH_WORKBUDDY_WIRE_DUMP'] !== undefined) {
+  delete process.env['DSH_WORKBUDDY_WIRE_DUMP']
+  console.log('wire dump off for this run: a probe replay is never written back to the capture file')
+}
+
+let cases = typeof bodyPath === 'string' ? dumpedBodies(bodyPath) : matrix(templatesDir, model)
+if (cases.length === 0) {
+  console.error('nothing to probe')
+  process.exit(1)
+}
+if (bisect && typeof bodyPath !== 'string') {
+  // The matrix is built to be bisected by hand, one case at a time; there is
+  // nothing to subtract from it, and running the search would only burn calls.
+  console.error('--bisect needs --body <dump>: it subtracts from a captured request')
+  process.exit(1)
+}
+
+// One record at a time. A dump that has accumulated replays is still a file of
+// hundreds of near-identical bodies, and sweeping them multiplies the request
+// count by the number of records for no new information: they all derive from
+// the same capture. Default to the earliest one, which is the request the app
+// itself was refused for, and make the others opt-in.
+const indexArg = arg('index')
+const sweep = arg('all', false) === true
+if (typeof bodyPath === 'string' && cases.length > 1) {
+  if (indexArg !== undefined && indexArg !== true) {
+    const wanted = Number(indexArg)
+    const picked = Number.isInteger(wanted) ? cases[wanted - 1] : undefined
+    if (picked === undefined) {
+      console.error(`--index ${String(indexArg)} is out of range: ${cases.length} record(s), numbered 1..${cases.length}`)
+      process.exit(1)
+    }
+    cases = [picked]
+  } else if (!sweep) {
+    const earliest = cases.reduce((best, item) => (String(item.captured.at) < String(best.captured.at) ? item : best))
+    console.log(`dump holds ${cases.length} record(s); replaying ${earliest.name}, the earliest capture (${earliest.captured.at}).`)
+    console.log('   others are usually probe replays of that same request — pass --index N, or --all to sweep every record')
+    cases = [earliest]
+  }
+}
+if (bisect && sweep) {
+  console.error('--bisect --all would replay every record through the whole search; pick one with --index N')
+  process.exit(1)
+}
+
+// Credentials last: a bad argument or an unreadable dump should say so without
+// needing a sign-in first.
 const client = new WorkBuddyUpstreamClient()
 const store = new WorkBuddyCredentialStore({ refresh: credential => client.refreshToken(credential) })
 let credential
@@ -403,29 +475,6 @@ if (credential === undefined) {
 
 const domain = credential.domain === '' ? '(empty domain: CN)' : credential.domain
 console.log(`credential: domain=${domain} uid=${credential.uid === '' ? '(none)' : `${credential.uid.slice(0, 4)}…`} enterprise=${credential.enterpriseId === undefined || credential.enterpriseId === '' ? '(none)' : `${credential.enterpriseId.slice(0, 4)}…`}`)
-
-const templatesDir = arg('templates', DEFAULT_TEMPLATES)
-const model = arg('model', 'auto')
-// A bare `--body` means "the file the switch names", so the replay side never
-// has to be told a path the writer already resolved.
-const bodyArg = arg('body')
-const bodyPath = bodyArg === true ? resolveWireDumpPath() : bodyArg
-const bisect = arg('bisect', false) === true
-if (bodyArg === true && bodyPath === undefined) {
-  console.error('--body without a value needs DSH_WORKBUDDY_WIRE_DUMP set in this window; pass a path instead')
-  process.exit(1)
-}
-const cases = typeof bodyPath === 'string' ? dumpedBodies(bodyPath) : matrix(templatesDir, model)
-if (cases.length === 0) {
-  console.error('nothing to probe')
-  process.exit(1)
-}
-if (bisect && typeof bodyPath !== 'string') {
-  // The matrix is built to be bisected by hand, one case at a time; there is
-  // nothing to subtract from it, and running the search would only burn calls.
-  console.error('--bisect needs --body <dump>: it subtracts from a captured request')
-  process.exit(1)
-}
 
 console.log(`\n${cases.length} case(s) on model ${model}; one short reply per accepted case\n`)
 for (const item of cases) {
