@@ -177,9 +177,13 @@ describe('prepareCnChatBody (#204): harness brand fingerprint', () => {
 describe('prepareCnChatBody: a bare @ mention', () => {
   const NOTE = 'Tokens prefixed with @ are paths the user explicitly referenced. Relative paths resolve from the workspace root.'
 
-  it('spells the bare token as ＠ and keeps the sentence', () => {
+  it('spells the bare token as ＠ and rewords the measured pair half', () => {
+    // NOTE is exactly the measured sentence pair, so both rules fire: the token
+    // is spelled ＠ and the second half takes the one-word rewording. Live
+    // measurement: the pair as originally worded drew 400 / 11128 even with the
+    // ＠ spelling; this exact output was what cleared it.
     const body = wire({ messages: [{ role: 'system', content: NOTE }] })
-    expect(body.messages[0].content).toBe(NOTE.replace('with @ are', 'with ＠ are'))
+    expect(body.messages[0].content).toBe('Tokens prefixed with ＠ are paths the user explicitly referenced. Relative paths start from the workspace root.')
   })
 
   it('rewrites every occurrence in the same carrier', () => {
@@ -226,5 +230,74 @@ describe('prepareCnChatBody: a bare @ mention', () => {
     expect(body.messages[0].content).toContain('＠ are')
     expect(body.messages[1].content).toBe('我用 @ 引用了一个文件')
     expect(body.messages[2].content).toBe('with @ are')
+  })
+})
+
+/**
+ * The path-note sentence pair pin.
+ *
+ * Measured on a live CN account on 2026-10-29 by re-bisecting the captured
+ * request after 0.8.2's `＠` rewrite was already on the wire and the note still
+ * drew 400 / 11128. The first sentence and the first clause of the second are
+ * each accepted alone; together — and only together — they refuse, and the
+ * refusal survives deleting the token entirely, so the trigger is the pair of
+ * wordings, not the `@` character. One changed word on either side clears it;
+ * the repair makes the measured one on the second half (`resolve from` →
+ * `start from`), which keeps the meaning.
+ */
+describe('prepareCnChatBody: the path-note sentence pair', () => {
+  const FIRST = 'Tokens prefixed with @ are paths the user explicitly referenced.'
+  const SECOND = 'Relative paths resolve from the workspace root.'
+  const PAIR = `${FIRST} ${SECOND}`
+
+  it('rewrites the second half only when both halves are present', () => {
+    const body = wire({ messages: [{ role: 'system', content: PAIR }] })
+    expect(body.messages[0].content).toBe('Tokens prefixed with ＠ are paths the user explicitly referenced. Relative paths start from the workspace root.')
+  })
+
+  it('fires on the shipped note with the ＠ spelling too', () => {
+    // The order of rewrites puts `＠` on the bare token first; the pair rule
+    // must still recognise its own lead sentence with the full-width form.
+    const body = wire({ messages: [{ role: 'system', content: `${PAIR} Absolute paths identify files or directories on the host.` }] })
+    expect(body.messages[0].content).toContain('with ＠ are')
+    expect(body.messages[0].content).toContain('start from the workspace root')
+  })
+
+  it('leaves each half alone when it appears without the other', () => {
+    // Each half alone is measured-accepted even with the bare token, which the
+    // `＠` rule still spells over — that is its own pin, not the pair rule's.
+    const onlyFirst = wire({ messages: [{ role: 'system', content: FIRST }] })
+    const onlySecond = wire({ messages: [{ role: 'system', content: SECOND }] })
+    expect(onlyFirst.messages[0].content).toBe('Tokens prefixed with ＠ are paths the user explicitly referenced.')
+    expect(onlySecond.messages[0].content).toBe(SECOND)
+  })
+
+  it('does not touch an unrelated text that merely mentions the root', () => {
+    const text = 'Relative paths resolve from the workspace root unless told otherwise.'
+    expect(wire({ messages: [{ role: 'system', content: text }] }).messages[0].content).toBe(text)
+  })
+
+  it('reaches the whole body: multipart text parts carry the rewrite too', () => {
+    const body = wire({ messages: [{ role: 'system', content: [{ type: 'text', text: PAIR }] }] })
+    expect(body.messages[0].content[0].text).toContain('start from the workspace root')
+  })
+
+  it('reaches harness-authored tool descriptions', () => {
+    const body = wire({
+      messages: [{ role: 'user', content: 'hi' }],
+      tools: [{ type: 'function', function: { name: 'read_file', description: PAIR } }],
+    })
+    expect(body.tools[0].function.description).toContain('start from the workspace root')
+  })
+
+  it('still never touches user or tool content', () => {
+    const body = wire({
+      messages: [
+        { role: 'user', content: PAIR },
+        { role: 'tool', content: PAIR },
+      ],
+    })
+    expect(body.messages[0].content).toBe(PAIR)
+    expect(body.messages[1].content).toBe(PAIR)
   })
 })

@@ -59,7 +59,7 @@ DSH 的插件页支持直接按 **npm 包名**安装：打开插件管理页 →
 ```text
 请帮我安装并验证 DSH（DeepSeek Harness）插件 dsh-workbuddy-connect（项目地址：https://github.com/Venshell/dsh-workbuddy-connect）：
 先阅读项目 README，确认我实际使用的界面（Web / Desktop / TUI）与 DSH 内核版本，桌面版以 App 内置核心为准，不要用独立 CLI 的版本代替；
-再按版本对应关系从 npm 正式包安装（0.2.1-rc.3→0.8.3、0.2.1-rc.2→0.7.9、0.2.1-rc.1→0.7.7、0.2.0-rc.2→0.7.6、rc.1→0.7.0、0.1.5–0.1.7→0.6.5）：内核符合 0.2.1-rc.3 及以上时，优先在插件页按包名 @venshell/dsh-workbuddy-connect 安装；其余情况用命令行固定版本装。部分 Desktop 发行版（尤其官方 Electron 版）的 profile 由 App 管理，各发行版规则未必相同，先确认我所用的发行版，再探查其合规的安装方式，但不得绕过其校验；
+再按版本对应关系从 npm 正式包安装（0.2.1-rc.3→0.8.4、0.2.1-rc.2→0.7.9、0.2.1-rc.1→0.7.7、0.2.0-rc.2→0.7.6、rc.1→0.7.0、0.1.5–0.1.7→0.6.5）：内核符合 0.2.1-rc.3 及以上时，优先在插件页按包名 @venshell/dsh-workbuddy-connect 安装；其余情况用命令行固定版本装。部分 Desktop 发行版（尤其官方 Electron 版）的 profile 由 App 管理，各发行版规则未必相同，先确认我所用的发行版，再探查其合规的安装方式，但不得绕过其校验；
 任何本地文件或配置改动，先征得我同意并做好备份；
 装完后验证模型选择器里出现 WorkBuddy 分组，并陪我完成一次简短对话；
 若 Desktop 安装仍因 generation 校验失败（如 @types/retry 误报），请如实报告、参照上游 dataelement/dsh-desktop#688，并建议我改用独立的 Web / TUI，不要修改依赖包或绕过校验。
@@ -70,8 +70,8 @@ DSH 的插件页支持直接按 **npm 包名**安装：打开插件管理页 →
 包发布在 npm：[`@venshell/dsh-workbuddy-connect`](https://www.npmjs.com/package/@venshell/dsh-workbuddy-connect)。
 
 ```sh
-# Web（按实际内核固定版本，示例 0.2.1-rc.3 → 0.8.3）
-dsh plugin --profile web add @venshell/dsh-workbuddy-connect@0.8.3
+# Web（按实际内核固定版本，示例 0.2.1-rc.3 → 0.8.4）
+dsh plugin --profile web add @venshell/dsh-workbuddy-connect@0.8.4
 dsh web
 
 # TUI（示例为 0.1.x 内核；该 profile 需用 pnpm 11 安装，如 npx pnpm@11）
@@ -189,6 +189,7 @@ WorkBuddy 的档位信息分散在上游接口与客户端私有 UI 逻辑里，
 | `role: "developer"` 发到国内端点 | 400 / `11128` | `prepareCnChatBody` 幂等改写成 `system`；绕过 shim 的调用同样覆盖 |
 | system / developer 里出现完整品牌词 | `11128` | 只缩短品牌，句子其余逐字保留；只匹配空格与制表符，`deepseek-harness` 这类路径与包名不动 |
 | 正文里出现**裸 `@`**（两侧为空白） | `11128`，0.8.2 实测 | 换成全角 `＠`；`@file`、`@scope/pkg`、邮箱、`@"…"` 一律不动 |
+| 「`@` 前缀路径」说明的**两句原文同段出现** | `11128`，0.8.4 实测：`＠` 改写后仍被拦，删掉 `@` 也拦 | 两句各自单独都放行，仅成对触发（与 `@` 字符无关）；同段同时出现时把第二句 `resolve from` 改成 `start from`，实测解拦 |
 | 非流式请求 | `11101` Non-stream chat request is currently not supported | `chatStream` 自己保证 `stream: true`，两个端点一致；已带该标志的 body 逐字节不变，不注入 `stream_options` |
 | 缺官方客户端的每请求标识与追踪头 | 同属「渠道不合规」，回同一个 `11128` 与同一句「请求被拦截」 | 补齐 `X-Request-ID` / `X-Private-Data` / `x-codebuddy-request` / `traceparent` / `b3` / `X-B3-*` / `X-Trace-ID`；ACP 专属的 `acp-connection-id`、`X-Agent-Intent`、`X-Agent-Purpose` **不伪造** |
 | 国内模型目录只读 `/v3/config` | App 形态 UA 下 `cli` agent 消失 → 20 个 id 丢 15 个 | 双源并集：`/v2/enterprises/personal/models` + `/v3/config`，单侧失败自动降级 |
@@ -291,7 +292,7 @@ dsh plugin --profile web exec dsh-workbuddy-connect doctor
 
 | DSH 内核 | 推荐插件版 | 注意 |
 |---|---|---|
-| `0.2.1-rc.3` 及以上、`0.3.0` 之前 | `0.8.3` | 声明 `engines.dsh` 后，同一 `0.2.x` 线内升级内核不必换插件 |
+| `0.2.1-rc.3` 及以上、`0.3.0` 之前 | `0.8.4` | 声明 `engines.dsh` 后，同一 `0.2.x` 线内升级内核不必换插件 |
 | `0.2.1-rc.2` | `0.7.9` | 仅适配这一内核；与 `0.2.0-rc.2` 不同，请核对 App 内置版本 |
 | `0.2.1-rc.1` | `0.7.7` | 内核升级到 pi-ai 1.3.0，历史遗留的 0.87.1 overrides 必须移除 |
 | `0.2.0-rc.2` | `0.7.6` | 上一代内核线，勿停留在有注册表回归的 0.7.2 |
@@ -339,6 +340,7 @@ peer 因此回归成纯粹的「构建与测试基准」，安装门槛只剩一
 
 | 版本 | 要点 |
 |---|---|
+| `0.8.4` | 修复国内版「请求被拦截」复发：网关新规则针对「`@` 前缀路径」说明里两句原文的成对出现，`＠` 改写不再足够；同段出现时把第二句改写一词，实测解拦。原有各条规则全部保留 |
 | `0.8.3` | 文档修正：npm 页面与包内的两份 README 换成重写后的版本，安装章节改为四条路并新增「插件页按包名安装」；代码与 0.8.2 逐字节相同 |
 | `0.8.2` | 国内版「请求被拦截」修复：对话被回 `11128`、部分请求被回 `11101`，两者均已修好；补官方客户端的每请求标识与追踪头；新增 `engines.dsh` 区间 |
 | `0.8.1` | 适配 DSH 0.2.1-rc.3：七项服务 peer 与开发依赖收窄到 rc.3，随包的官方原子写入工具同步升级 |

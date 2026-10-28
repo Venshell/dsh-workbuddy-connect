@@ -66,7 +66,7 @@ verbatim:
 ```text
 Please install and verify the DSH (DeepSeek Harness) plugin dsh-workbuddy-connect for me (project: https://github.com/Venshell/dsh-workbuddy-connect).
 Start by reading the project README and confirming which interface I actually use (Web / Desktop / TUI) and its DSH core version — for the Desktop app, the bundled core, never the standalone CLI's version.
-Then install from the official npm package per the version mapping (0.2.1-rc.3 -> 0.8.3, 0.2.1-rc.2 -> 0.7.9, 0.2.1-rc.1 -> 0.7.7, 0.2.0-rc.2 -> 0.7.6, rc.1 -> 0.7.0, 0.1.5-0.1.7 -> 0.6.5): if my core is 0.2.1-rc.3 or newer, prefer installing @venshell/dsh-workbuddy-connect from the plugin page; otherwise pin the version from the command line. On some Desktop distributions (the official Electron app in particular) the profile is app-managed and rules vary by distribution — check mine first, then explore its compliant install route, but never bypass its validation.
+Then install from the official npm package per the version mapping (0.2.1-rc.3 -> 0.8.4, 0.2.1-rc.2 -> 0.7.9, 0.2.1-rc.1 -> 0.7.7, 0.2.0-rc.2 -> 0.7.6, rc.1 -> 0.7.0, 0.1.5-0.1.7 -> 0.6.5): if my core is 0.2.1-rc.3 or newer, prefer installing @venshell/dsh-workbuddy-connect from the plugin page; otherwise pin the version from the command line. On some Desktop distributions (the official Electron app in particular) the profile is app-managed and rules vary by distribution — check mine first, then explore its compliant install route, but never bypass its validation.
 Ask for my consent and make backups before changing any local files or configuration.
 After installing, verify the WorkBuddy group appears in the model picker and walk me through one short conversation.
 If the Desktop install still fails generation validation (e.g. the @types/retry false positive), report it honestly, reference upstream dataelement/dsh-desktop#688, and suggest switching to the standalone Web / TUI — do not modify dependency packages or bypass the check.
@@ -77,8 +77,8 @@ If the Desktop install still fails generation validation (e.g. the @types/retry 
 The package is published on npm: [`@venshell/dsh-workbuddy-connect`](https://www.npmjs.com/package/@venshell/dsh-workbuddy-connect).
 
 ```sh
-# Web (pin per your actual core — example: 0.2.1-rc.3 -> 0.8.3)
-dsh plugin --profile web add @venshell/dsh-workbuddy-connect@0.8.3
+# Web (pin per your actual core — example: 0.2.1-rc.3 -> 0.8.4)
+dsh plugin --profile web add @venshell/dsh-workbuddy-connect@0.8.4
 dsh web
 
 # TUI (example for a 0.1.x core; that profile needs pnpm 11, e.g. npx pnpm@11)
@@ -212,6 +212,7 @@ level"; it promises nothing about reasoning quality, speed, or credit use.
 | `role: "developer"` sent to the CN endpoint | 400 / `11128` | `prepareCnChatBody` idempotently rewrites it to `system`; calls that bypass the shim are covered too |
 | A full brand word in system / developer | `11128` | Only the brand is shortened and the rest of the sentence stays verbatim; only spaces and tabs are matched, so paths and package names such as `deepseek-harness` are untouched |
 | A **bare `@`** in the body (whitespace on both sides) | `11128`, measured on 0.8.2 | Replaced with the full-width `＠`; `@file`, `@scope/pkg`, e-mail addresses and `@"…"` are never touched |
+| Both sentences of the **`@`-prefixed-paths note** in one passage | `11128`, measured on 0.8.4: still refused with the `＠` rewrite on the wire, and still refused with the token deleted | Each half alone is accepted; only the pair refuses, independent of the `@` character. When both appear in one passage, the second is reworded `resolve from` → `start from`, which measured as clearing the refusal |
 | A non-streaming request | `11101` Non-stream chat request is currently not supported | `chatStream` guarantees `stream: true` itself, identically on both endpoints; a body that already carries the flag stays byte-identical, and `stream_options` is never injected |
 | Missing the official client's per-request identity and trace headers | Same "channel not approved" class, answered with the same `11128` and the same sentence | Fills in `X-Request-ID` / `X-Private-Data` / `x-codebuddy-request` / `traceparent` / `b3` / `X-B3-*` / `X-Trace-ID`; the ACP-only `acp-connection-id`, `X-Agent-Intent` and `X-Agent-Purpose` are deliberately **not** impersonated |
 | The CN catalog reads `/v3/config` only | Under an app-form UA the `cli` agent disappears → 15 of 20 ids are lost | Union of two sources: `/v2/enterprises/personal/models` + `/v3/config`, degrading automatically when either side fails |
@@ -322,7 +323,7 @@ core. The newest npm release is not necessarily right for you, so match your act
 
 | DSH core | Recommended plugin | Notes |
 |---|---|---|
-| `0.2.1-rc.3` and later, below `0.3.0` | `0.8.3` | With `engines.dsh` declared, a core upgrade inside the same `0.2.x` line no longer needs a new plugin |
+| `0.2.1-rc.3` and later, below `0.3.0` | `0.8.4` | With `engines.dsh` declared, a core upgrade inside the same `0.2.x` line no longer needs a new plugin |
 | `0.2.1-rc.2` | `0.7.9` | Targets this core only; unlike `0.2.0-rc.2`, so check the version bundled in your app |
 | `0.2.1-rc.1` | `0.7.7` | The core moved to pi-ai 1.3.0, so a leftover 0.87.1 overrides entry must be removed |
 | `0.2.0-rc.2` | `0.7.6` | Previous core line; do not stay on 0.7.2, which has a registry regression |
@@ -373,6 +374,7 @@ Full records at [releases](https://github.com/Venshell/dsh-workbuddy-connect/rel
 
 | Version | Highlights |
 |---|---|
+| `0.8.4` | Fixes the CN "request blocked" regression: a new gateway rule targets the two sentences of the `@`-prefixed-paths note appearing together, which the `＠` rewrite alone no longer clears; when both appear in one passage the second is reworded by one measured change. Every existing rule stays |
 | `0.8.3` | Documentation only: the npm page and the packaged READMEs now ship the rewritten install chapter, which lists four routes and adds the plugin-page install; the code is byte-identical to 0.8.2 |
 | `0.8.2` | Fixes the CN "request blocked" failure: conversations answered `11128` and some requests answered `11101`, both fixed; adds the official client's per-request identity and trace headers; adds the `engines.dsh` range |
 | `0.8.1` | Adapts to DSH 0.2.1-rc.3: seven service peers and dev dependencies narrow to rc.3, the bundled official atomic-write helper upgrades along |
